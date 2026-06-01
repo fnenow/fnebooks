@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Settings</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="notice">Settings are placeholders for future functions like AI extraction, storage, export company info, and missing-info rules.</div>
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+async function loadSettings() {
+  const rows = await api('/api/settings');
+  table.innerHTML = `<tr><th>Key</th><th>Value</th><th>Type</th><th>Description</th><th>Updated</th><th>Action</th></tr>` + rows.map(r => `<tr>
+    <td>${escapeHtml(r.setting_key)}</td>
+    <td><input id="value-${r.setting_key}" value="${escapeHtml(r.setting_value)}"></td>
+    <td><input id="type-${r.setting_key}" value="${escapeHtml(r.setting_type)}"></td>
+    <td>${escapeHtml(r.description)}</td>
+    <td>${escapeHtml(r.updated_at)}</td>
+    <td><button onclick="saveSetting('${r.setting_key}')">Save</button></td>
+  </tr>`).join('');
+}
+async function saveSetting(key) {
+  await api('/api/settings/' + encodeURIComponent(key), {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ setting_value: document.getElementById('value-'+key).value, setting_type: document.getElementById('type-'+key).value })
+  });
+  await loadSettings();
+}
+function showError(err) { message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`; }
+(async function init(){ await ensureAdmin(); await loadSettings(); })().catch(showError);
+</script>
+</body>
+</html>

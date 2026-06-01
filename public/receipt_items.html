@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receipt Items - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Receipt Items</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <form id="filterForm">
+      <div class="grid">
+        <div><label>Start Date</label><input type="date" name="start_date"></div>
+        <div><label>End Date</label><input type="date" name="end_date"></div>
+        <div><label>Item ID</label><input name="item_id"></div>
+        <div><label>Project</label><select name="project_id" id="projectFilter"><option value="">All</option></select></div>
+        <div><label>Worker</label><select name="worker_id" id="workerFilter"><option value="">All</option></select></div>
+        <div><label>Product Name</label><input name="product_name"></div>
+        <div><label>Product Code</label><input name="product_code"></div>
+        <div><label>Group By</label><select name="group_by"><option value="">No Group</option><option value="project">Project</option><option value="store">Store</option><option value="product_name">Product Name</option><option value="product_code">Product Code</option><option value="category">Category</option><option value="worker">Worker</option><option value="month">Month</option></select></div>
+      </div>
+      <br>
+      <div class="grid">
+        <button>Apply Filter</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+        <button type="button" class="secondary" onclick="exportCsv()">Export CSV</button>
+      </div>
+    </form>
+  </div>
+  <div class="card scroll">
+    <table id="table"></table>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+async function loadLookups() {
+  const [workers, projects] = await Promise.all([api('/api/lookups/workers'), api('/api/lookups/projects')]);
+  workerFilter.innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
+  projectFilter.innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
+}
+function currentParams() { return formParams(document.getElementById('filterForm')); }
+async function loadItems() {
+  const data = await api('/api/receipt-items?' + currentParams().toString());
+  if (data.mode === 'grouped') renderGrouped(data.rows);
+  else renderList(data.rows);
+}
+function renderGrouped(rows) {
+  table.innerHTML = `<tr><th>Group</th><th>Item Count</th><th>Total Quantity</th><th>Total Amount</th></tr>` +
+    rows.map(r => `<tr><td>${escapeHtml(r.group_value)}</td><td>${r.item_count}</td><td>${r.total_quantity}</td><td>${money(r.total_amount)}</td></tr>`).join('');
+}
+function renderList(rows) {
+  table.innerHTML = `<tr><th>Item ID</th><th>Receipt Number</th><th>Receipt Date</th><th>Store</th><th>Worker</th><th>Product Name</th><th>Product Code</th><th>Qty</th><th>Unit Price</th><th>Item Total</th><th>Project</th><th>Corrected</th></tr>` +
+    rows.map(r => `<tr>
+      <td>${r.item_id}</td>
+      <td>${escapeHtml(r.receipt_number)}</td>
+      <td>${dateOnly(r.receipt_date)}</td>
+      <td>${escapeHtml(r.store)}</td>
+      <td>${escapeHtml(r.worker_name)}</td>
+      <td>${escapeHtml(r.product_name)}</td>
+      <td>${escapeHtml(r.product_code)}</td>
+      <td>${r.quantity ?? ''}</td>
+      <td>${money(r.unit_price)}</td>
+      <td>${money(r.item_total)}</td>
+      <td>${escapeHtml(r.project_name)}</td>
+      <td>${r.corrected ? 'Yes' : 'No'}</td>
+    </tr>`).join('');
+}
+function clearFilters() { filterForm.reset(); loadItems(); }
+function exportCsv() { window.location.href = '/api/receipt-items/export.csv?' + currentParams().toString(); }
+filterForm.addEventListener('submit', e => { e.preventDefault(); loadItems().catch(showError); });
+function showError(err) { message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`; }
+(async function init(){ await ensureAdmin(); await loadLookups(); await loadItems(); })().catch(showError);
+</script>
+</body>
+</html>

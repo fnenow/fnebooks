@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload Receipt - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Upload Receipt</h1>
+    <nav><a href="/receipts.html">Admin Receipts</a></nav>
+  </header>
+  <main>
+    <div id="message"></div>
+    <div class="card">
+      <form id="receiptForm" enctype="multipart/form-data">
+        <div class="grid">
+          <div><label>Receipt Photo/PDF</label><input type="file" name="receipt_file" accept="image/*,.pdf"></div>
+          <div><label>Receipt Date</label><input type="date" name="receipt_date"></div>
+          <div><label>Receipt Number</label><input name="receipt_number"></div>
+          <div><label>Worker</label><select name="worker_id" id="workerSelect"><option value="">Select worker</option></select></div>
+          <div><label>Store</label><input name="store"></div>
+          <div><label>Project</label><select name="project_id" id="projectSelect"><option value="">Select project</option></select></div>
+          <div><label>Category</label><select name="category_id" id="categorySelect"><option value="">Select category</option></select></div>
+          <div><label>Subtotal</label><input type="number" step="0.01" name="subtotal"></div>
+          <div><label>Tax</label><input type="number" step="0.01" name="tax"></div>
+          <div><label>Total</label><input type="number" step="0.01" name="total"></div>
+          <div><label>Payment Method</label><input name="payment_method" placeholder="1234, cash, check, unknown"></div>
+        </div>
+        <br>
+        <label>Note</label>
+        <textarea name="note" rows="3"></textarea>
+        <br><br>
+        <button>Save Receipt</button>
+      </form>
+      <p class="small">AI extraction can be added later. For now, user can enter or correct the main fields.</p>
+    </div>
+  </main>
+  <script src="/common.js"></script>
+  <script>
+    async function loadLookups() {
+      const [workers, projects, categories] = await Promise.all([
+        api('/api/lookups/workers'),
+        api('/api/lookups/projects'),
+        api('/api/lookups/categories')
+      ]);
+      workerSelect.innerHTML = '<option value="">Select worker</option>' + optionHtml(workers, 'worker_id', 'name');
+      projectSelect.innerHTML = '<option value="">Select project</option>' + optionHtml(projects, 'id', 'name');
+      categorySelect.innerHTML = '<option value="">Select category</option>' + optionHtml(categories, 'id', 'name');
+    }
+    document.getElementById('receiptForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const message = document.getElementById('message');
+      try {
+        const formData = new FormData(e.target);
+        const data = await api('/api/receipts', { method: 'POST', body: formData });
+        message.innerHTML = `<div class="notice">Saved receipt #${data.receipt.id}</div>`;
+        e.target.reset();
+        await loadLookups();
+      } catch (err) {
+        message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`;
+      }
+    });
+    loadLookups().catch(err => message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`);
+  </script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receipts - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>FNEBooks Receipts</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <form id="filterForm">
+      <div class="grid">
+        <div><label>Start Date</label><input type="date" name="start_date"></div>
+        <div><label>End Date</label><input type="date" name="end_date"></div>
+        <div><label>Worker</label><select name="worker_id" id="workerFilter"><option value="">All</option></select></div>
+        <div><label>Project</label><select name="project_id" id="projectFilter"><option value="">All</option></select></div>
+        <div><label>Category</label><select name="category_id" id="categoryFilter"><option value="">All</option></select></div>
+        <div><label>Store</label><input name="store"></div>
+        <div><label>Receipt Number</label><input name="receipt_number"></div>
+        <div><label>Payment Method</label><input name="payment_method"></div>
+        <div><label>Follow Up</label><select name="follow_up"><option value="">All</option><option>reimburse</option><option>collect</option></select></div>
+        <div><label>Corrected</label><select name="corrected"><option value="">All</option><option value="yes">Yes</option><option value="no">No</option></select></div>
+        <div><label>Missing Info Only</label><select name="missing_info_only"><option value="">No</option><option value="true">Yes</option></select></div>
+        <div><label>Group By</label><select name="group_by"><option value="">No Group</option><option value="project">Project</option><option value="worker">Worker</option><option value="category">Category</option><option value="store">Store</option><option value="payment_method">Payment Method</option><option value="follow_up">Follow Up</option><option value="month">Month</option></select></div>
+      </div>
+      <br>
+      <div class="grid">
+        <button>Apply Filter</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+        <button type="button" class="secondary" onclick="exportCsv()">Export CSV</button>
+      </div>
+    </form>
+  </div>
+  <div class="card scroll">
+    <table id="table"></table>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+let workers = [], projects = [], categories = [];
+async function loadLookups() {
+  [workers, projects, categories] = await Promise.all([
+    api('/api/lookups/workers'), api('/api/lookups/projects'), api('/api/lookups/categories')
+  ]);
+  workerFilter.innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
+  projectFilter.innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
+  categoryFilter.innerHTML = '<option value="">All</option>' + optionHtml(categories, 'id', 'name');
+}
+function currentParams() { return formParams(document.getElementById('filterForm')); }
+async function loadReceipts() {
+  const data = await api('/api/receipts?' + currentParams().toString());
+  if (data.mode === 'grouped') renderGrouped(data.rows);
+  else renderList(data.rows);
+}
+function renderGrouped(rows) {
+  table.innerHTML = `<tr><th>Group</th><th>Receipt Count</th><th>Total Tax</th><th>Total Amount</th></tr>` +
+    rows.map(r => `<tr><td>${escapeHtml(r.group_value)}</td><td>${r.receipt_count}</td><td>${money(r.total_tax)}</td><td>${money(r.total_amount)}</td></tr>`).join('');
+}
+function renderList(rows) {
+  table.innerHTML = `<tr><th>Receipt Date</th><th>Receipt Number</th><th>Worker</th><th>Store</th><th>Project</th><th>Category</th><th>Total</th><th>Payment Method</th><th>Follow Up</th><th>Flags</th><th>Action</th></tr>` +
+    rows.map(r => `<tr>
+      <td>${dateOnly(r.receipt_date)}</td>
+      <td>${escapeHtml(r.receipt_number)}</td>
+      <td>${escapeHtml(r.worker_name)}</td>
+      <td>${escapeHtml(r.store)}</td>
+      <td>${escapeHtml(r.project_name)}</td>
+      <td>${escapeHtml(r.category_name)}</td>
+      <td>${money(r.total)}</td>
+      <td>${escapeHtml(r.payment_method)}</td>
+      <td><select class="inline-select" onchange="updateFollowUp(${r.id}, this.value)"><option value="">Blank</option><option value="reimburse" ${r.follow_up==='reimburse'?'selected':''}>reimburse</option><option value="collect" ${r.follow_up==='collect'?'selected':''}>collect</option></select></td>
+      <td>${r.corrected ? 'Corrected ' : ''}${r.missing_info ? 'Missing Info' : ''}</td>
+      <td class="row-actions"><button onclick="viewFile(${r.id})">File</button><button class="danger" onclick="deleteReceipt(${r.id})">Delete</button></td>
+    </tr>`).join('');
+}
+async function updateFollowUp(id, value) {
+  await api('/api/receipts/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ follow_up: value || null, correction_note: 'follow_up updated' }) });
+  await loadReceipts();
+}
+function viewFile(id) { window.open('/api/receipts/' + id + '/file', '_blank'); }
+async function deleteReceipt(id) {
+  if (!confirm('Deactivate this receipt?')) return;
+  await api('/api/receipts/' + id, { method: 'DELETE' });
+  await loadReceipts();
+}
+function clearFilters() { filterForm.reset(); loadReceipts(); }
+function exportCsv() { window.location.href = '/api/receipts/export.csv?' + currentParams().toString(); }
+filterForm.addEventListener('submit', e => { e.preventDefault(); loadReceipts().catch(showError); });
+function showError(err) { message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`; }
+(async function init(){ await ensureAdmin(); await loadLookups(); await loadReceipts(); })().catch(showError);
+</script>
+</body>
+</html>

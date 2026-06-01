@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FNEBooks Login</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header><h1>FNEBooks Login</h1></header>
+  <main style="max-width:460px">
+    <div class="card">
+      <div id="message"></div>
+      <form id="loginForm">
+        <label>Admin Password</label>
+        <input type="password" name="password" required autofocus>
+        <br><br>
+        <button>Login</button>
+      </form>
+      <p class="small">Login is saved for 1 month unless you log out.</p>
+    </div>
+  </main>
+  <script src="/common.js"></script>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const message = document.getElementById('message');
+      try {
+        await api('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.fromEntries(new FormData(e.target)))
+        });
+        window.location.href = '/receipts.html';
+      } catch (err) {
+        message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`;
+      }
+    });
+  </script>
+</body>
+</html>

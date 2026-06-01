@@ -1,0 +1,19 @@
+{
+  "name": "fnebooks-start",
+  "version": "1.0.0",
+  "description": "FNEBooks bookkeeping receipt app starter",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "connect-pg-simple": "latest",
+    "cors": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "express-session": "latest",
+    "multer": "latest",
+    "pg": "latest"
+  }
+}

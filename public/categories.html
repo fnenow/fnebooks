@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Categories - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Categories</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <form id="categoryForm">
+      <div class="grid">
+        <div><label>New Category Name</label><input name="name" required></div>
+        <div style="align-self:end"><button>Add Category</button></div>
+      </div>
+    </form>
+  </div>
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+async function loadCategories() {
+  const rows = await api('/api/categories');
+  table.innerHTML = `<tr><th>ID</th><th>Name</th><th>Active</th><th>Action</th></tr>` + rows.map(r => `<tr>
+    <td>${r.id}</td>
+    <td><input value="${escapeHtml(r.name)}" id="name-${r.id}"></td>
+    <td><select id="active-${r.id}"><option value="true" ${r.active?'selected':''}>true</option><option value="false" ${!r.active?'selected':''}>false</option></select></td>
+    <td><button onclick="saveCategory(${r.id})">Save</button></td>
+  </tr>`).join('');
+}
+async function saveCategory(id) {
+  await api('/api/categories/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name: document.getElementById('name-'+id).value, active: document.getElementById('active-'+id).value }) });
+  await loadCategories();
+}
+categoryForm.addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/api/categories', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+    e.target.reset();
+    await loadCategories();
+  } catch (err) { showError(err); }
+});
+function showError(err) { message.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`; }
+(async function init(){ await ensureAdmin(); await loadCategories(); })().catch(showError);
+</script>
+</body>
+</html>
