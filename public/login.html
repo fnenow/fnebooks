@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Login - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><h1>FNEBooks Admin Login</h1><nav><a href="/upload-login.html">Worker Upload</a></nav></header>
+<main class="login-box">
+  <div class="card">
+    <div id="message"></div>
+    <form id="loginForm">
+      <label>Admin Password</label>
+      <input type="password" name="password" required autofocus autocomplete="current-password">
+      <br><br>
+      <button>Login</button>
+    </form>
+    <p class="small">Login remains active for up to one month while the browser session is used.</p>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async function checkExisting(){
+  const me = await api('/api/me');
+  if (me.isAdmin) window.location.href = '/receipts.html';
+})().catch(() => {});
+
+document.getElementById('loginForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    await api('/api/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+    });
+    window.location.href = '/receipts.html';
+  } catch (err) {
+    showPageMessage(err.message, 'error');
+  }
+});
+</script>
+</body>
+</html>

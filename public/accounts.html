@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chart of Accounts - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Chart of Accounts</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+
+  <div class="card">
+    <h2>Add Account</h2>
+    <form id="accountForm">
+      <div class="grid">
+        <div><label>Account Code</label><input name="account_code" placeholder="Leave blank to generate"></div>
+        <div><label>Account Name</label><input name="account_name" required></div>
+        <div><label>Transaction Kind</label><select name="transaction_kind"><option value="expense">Expense</option><option value="income">Income</option></select></div>
+        <div><label>Accounting Type</label><input name="accounting_type" placeholder="Operating Expense" required></div>
+        <div><label>Normal Balance</label><select name="normal_balance"><option value="">Auto</option><option value="debit">Debit</option><option value="credit">Credit</option></select></div>
+      </div>
+      <br><button>Add Account</button>
+    </form>
+    <p class="small">When code is blank, the system uses the active date-effective rule and advances the next code.</p>
+  </div>
+
+  <div class="card">
+    <form id="filterForm">
+      <div class="grid compact">
+        <div><label>Created From</label><input type="date" name="created_from"></div>
+        <div><label>Created To</label><input type="date" name="created_to"></div>
+        <div><label>Kind</label><select name="transaction_kind"><option value="">All</option><option value="expense">Expense</option><option value="income">Income</option></select></div>
+        <div><label>Source</label><select name="source"><option value="">All</option><option>workbook</option><option>system</option><option>ai</option><option>admin</option></select></div>
+        <div><label>Review</label><select name="review_status"><option value="">All</option><option>new</option><option>needs_review</option><option>approved</option><option>inactive</option></select></div>
+        <div><label>Active</label><select name="active"><option value="">All</option><option value="true">Yes</option><option value="false">No</option></select></div>
+        <div><label>Search</label><input name="search" placeholder="Code or name"></div>
+      </div>
+      <br>
+      <div class="grid compact">
+        <button>Apply Filter</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card scroll"><table id="table"></table></div>
+
+  <div class="card">
+    <h2>Account-Code Rules</h2>
+    <div class="scroll"><table id="rulesTable"></table></div>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+const filterForm = document.getElementById('filterForm');
+const table = document.getElementById('table');
+const rulesTable = document.getElementById('rulesTable');
+
+async function loadAccounts() {
+  const rows = await api('/api/accounts?' + formParams(filterForm).toString());
+  table.innerHTML = `<tr><th>Code</th><th>Name</th><th>Kind</th><th>Accounting Type</th><th>Normal</th><th>Source</th><th>Review</th><th>Categories</th><th>Created</th><th>Active</th><th>Action</th></tr>` + rows.map(row => `<tr>
+    <td><input class="code" id="code-${row.id}" value="${escapeHtml(row.account_code)}"></td>
+    <td><input id="name-${row.id}" value="${escapeHtml(row.account_name)}"></td>
+    <td>${escapeHtml(row.transaction_kind)}</td>
+    <td><input id="type-${row.id}" value="${escapeHtml(row.accounting_type)}"></td>
+    <td><select id="normal-${row.id}"><option value="debit" ${row.normal_balance === 'debit' ? 'selected' : ''}>debit</option><option value="credit" ${row.normal_balance === 'credit' ? 'selected' : ''}>credit</option></select></td>
+    <td>${escapeHtml(row.source)}</td>
+    <td><select id="review-${row.id}"><option ${row.review_status === 'new' ? 'selected' : ''}>new</option><option ${row.review_status === 'needs_review' ? 'selected' : ''}>needs_review</option><option ${row.review_status === 'approved' ? 'selected' : ''}>approved</option><option ${row.review_status === 'inactive' ? 'selected' : ''}>inactive</option></select></td>
+    <td>${row.category_count}</td>
+    <td>${dateOnly(row.created_at)}</td>
+    <td><select id="active-${row.id}"><option value="true" ${row.active ? 'selected' : ''}>Yes</option><option value="false" ${!row.active ? 'selected' : ''}>No</option></select></td>
+    <td><button class="small-button" onclick="saveAccount(${row.id})">Save</button></td>
+  </tr>`).join('');
+}
+
+async function loadRules() {
+  const rows = await api('/api/accounts/rules');
+  rulesTable.innerHTML = `<tr><th>Kind</th><th>Accounting Type</th><th>Range</th><th>Next Code</th><th>Step</th><th>Length</th><th>Effective</th><th>Active</th></tr>` + rows.map(row => `<tr>
+    <td>${escapeHtml(row.transaction_kind)}</td><td>${escapeHtml(row.accounting_type)}</td>
+    <td class="code">${row.code_start}-${row.code_end}</td><td class="code">${row.next_code}</td>
+    <td>${row.increment_by}</td><td>${row.code_length}</td>
+    <td>${dateOnly(row.effective_from)}${row.effective_to ? ' to ' + dateOnly(row.effective_to) : ''}</td>
+    <td>${row.active ? 'Yes' : 'No'}</td>
+  </tr>`).join('');
+}
+
+async function saveAccount(id) {
+  try {
+    await api('/api/accounts/' + id, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        account_code: document.getElementById('code-' + id).value,
+        account_name: document.getElementById('name-' + id).value,
+        accounting_type: document.getElementById('type-' + id).value,
+        normal_balance: document.getElementById('normal-' + id).value,
+        review_status: document.getElementById('review-' + id).value,
+        active: document.getElementById('active-' + id).value
+      })
+    });
+    showPageMessage('Account updated. Related category, receipt, and item snapshots were refreshed.');
+    await loadAccounts();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+
+accountForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(event.target));
+    if (!body.account_code) delete body.account_code;
+    if (!body.normal_balance) delete body.normal_balance;
+    await api('/api/accounts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    event.target.reset();
+    showPageMessage('Account added.');
+    await Promise.all([loadAccounts(), loadRules()]);
+  } catch (err) { showPageMessage(err.message, 'error'); }
+});
+
+filterForm.addEventListener('submit', event => { event.preventDefault(); loadAccounts().catch(err => showPageMessage(err.message, 'error')); });
+function clearFilters() { filterForm.reset(); loadAccounts().catch(err => showPageMessage(err.message, 'error')); }
+(async function init(){ await ensureAdmin(); await Promise.all([loadAccounts(), loadRules()]); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>

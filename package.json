@@ -1,0 +1,24 @@
+{
+  "name": "fnebooks",
+  "version": "1.2.0",
+  "private": true,
+  "description": "FNEBooks bookkeeping receipt app with AI-friendly categories and chart of accounts",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "check": "node scripts/check.js",
+    "test": "npm run check"
+  },
+  "dependencies": {
+    "connect-pg-simple": "10.0.0",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "express-session": "1.19.0",
+    "multer": "2.2.0",
+    "pg": "8.21.0"
+  }
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worker Upload Login - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header><h1>FNEBooks Worker Upload</h1><nav><a href="/login.html">Admin Login</a></nav></header>
+<main class="login-box">
+  <div class="card">
+    <div id="message"></div>
+    <form id="loginForm">
+      <label>Worker Upload Password</label>
+      <input type="password" name="password" required autofocus autocomplete="current-password">
+      <br><br>
+      <button>Continue to Receipt Upload</button>
+    </form>
+    <p class="small">This is a temporary shared upload password. It can be replaced by the existing FNEClock worker login later.</p>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+(async function checkExisting(){
+  const me = await api('/api/me');
+  if (me.canUpload) window.location.href = '/upload_receipt.html';
+})().catch(() => {});
+
+document.getElementById('loginForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    await api('/api/upload-login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+    });
+    window.location.href = '/upload_receipt.html';
+  } catch (err) {
+    showPageMessage(err.message, 'error');
+  }
+});
+</script>
+</body>
+</html>

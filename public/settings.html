@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Settings</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="notice">Environment secrets such as database, admin password, upload password, and session secret must be changed in Railway Variables—not on this page.</div>
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+const table = document.getElementById('table');
+async function loadSettings() {
+  const rows = await api('/api/settings');
+  table.innerHTML = `<tr><th>Key</th><th>Value</th><th>Type</th><th>Description</th><th>Updated</th><th>Action</th></tr>` + rows.map(row => `<tr>
+    <td class="code">${escapeHtml(row.setting_key)}</td>
+    <td><input id="value-${row.setting_key}" value="${escapeHtml(row.setting_value)}"></td>
+    <td><select id="type-${row.setting_key}"><option ${row.setting_type === 'text' ? 'selected' : ''}>text</option><option ${row.setting_type === 'boolean' ? 'selected' : ''}>boolean</option><option ${row.setting_type === 'number' ? 'selected' : ''}>number</option><option ${row.setting_type === 'json' ? 'selected' : ''}>json</option></select></td>
+    <td>${escapeHtml(row.description)}</td>
+    <td>${dateOnly(row.updated_at)}</td>
+    <td><button class="small-button" onclick="saveSetting('${row.setting_key}')">Save</button></td>
+  </tr>`).join('');
+}
+async function saveSetting(key) {
+  try {
+    await api('/api/settings/' + encodeURIComponent(key), {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        setting_value: document.getElementById('value-' + key).value,
+        setting_type: document.getElementById('type-' + key).value
+      })
+    });
+    showPageMessage('Setting saved.');
+    await loadSettings();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+(async function init(){ await ensureAdmin(); await loadSettings(); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>

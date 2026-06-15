@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Categories - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Categories</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <h2>Add Category</h2>
+    <form id="categoryForm">
+      <div class="grid">
+        <div><label>Transaction Kind</label><select name="transaction_kind"><option value="expense">Expense</option><option value="income">Income</option></select></div>
+        <div><label>Type</label><input name="type_name" placeholder="Direct Project Cost" required></div>
+        <div><label>General Category</label><input name="general_category" placeholder="Materials" required></div>
+        <div><label>Detail Category</label><input name="detail_category" placeholder="Other Project Materials" required></div>
+        <div><label>Accounting Type</label><input name="accounting_type" value="Review Required" required></div>
+        <div><label>Existing Account</label><select name="account_id" id="newAccount"><option value="">Generate New Account Code</option></select></div>
+        <div><label>Project Applicability</label><input name="project_type_applicability" value="All Project Types"></div>
+        <div><label>Project Required</label><select name="project_required"><option>Yes</option><option>No</option><option selected>Optional</option></select></div>
+        <div><label>AI Handling</label><select name="ai_handling"><option>Auto</option><option selected>Prefill & Review</option><option>Manual Review</option></select></div>
+      </div>
+      <br>
+      <label>AI Classification Clues / Examples</label>
+      <textarea name="ai_clues" rows="2"></textarea>
+      <br><br>
+      <button>Add Category</button>
+    </form>
+    <p class="small">When no account is selected, FNEBooks creates the next code using the effective account-code rule. New generated accounts are marked for review.</p>
+  </div>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>Kind</label><select id="kindFilter"><option value="">All</option><option value="expense">Expense</option><option value="income">Income</option></select></div>
+      <div><label>Search</label><input id="searchFilter" placeholder="Type, general, detail, or account"></div>
+      <div style="align-self:end"><button type="button" onclick="loadCategories()">Apply Filter</button></div>
+    </div>
+  </div>
+
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+let accountRows = [];
+const table = document.getElementById('table');
+const kindFilter = document.getElementById('kindFilter');
+const searchFilter = document.getElementById('searchFilter');
+const categoryForm = document.getElementById('categoryForm');
+
+function accountOptions(kind, selected = '') {
+  return accountRows
+    .filter(row => !kind || row.transaction_kind === kind)
+    .map(row => `<option value="${row.id}" ${String(row.id) === String(selected) ? 'selected' : ''}>${escapeHtml(row.account_code)} - ${escapeHtml(row.account_name)}</option>`)
+    .join('');
+}
+
+async function loadAccounts() {
+  accountRows = await api('/api/lookups/accounts');
+  document.getElementById('newAccount').innerHTML = '<option value="">Generate New Account Code</option>' + accountOptions('expense');
+}
+
+async function loadCategories() {
+  const kind = kindFilter.value;
+  const rows = await api('/api/categories' + (kind ? `?kind=${encodeURIComponent(kind)}` : ''));
+  const search = searchFilter.value.trim().toLowerCase();
+  const filtered = search ? rows.filter(row => [
+    row.type_name, row.general_category, row.detail_category,
+    row.accounting_type, row.account_code, row.account_name
+  ].some(value => String(value || '').toLowerCase().includes(search))) : rows;
+
+  table.innerHTML = `<tr><th>ID</th><th>Kind</th><th>Type / General</th><th>Detail Category</th><th>Account</th><th>Project</th><th>AI</th><th>Active</th><th>Action</th></tr>` + filtered.map(row => `<tr>
+    <td>${row.id}</td>
+    <td>${escapeHtml(row.transaction_kind)}</td>
+    <td>${escapeHtml(row.type_name)}<br><span class="small">${escapeHtml(row.general_category)}</span></td>
+    <td title="${escapeHtml(row.ai_clues)}">${escapeHtml(row.detail_category)}</td>
+    <td><select id="account-${row.id}"><option value="">Unassigned</option>${accountOptions(row.transaction_kind, row.account_id)}</select><div class="small">${escapeHtml(row.accounting_type)}</div></td>
+    <td>${escapeHtml(row.project_required)}</td>
+    <td>${escapeHtml(row.ai_handling)}</td>
+    <td><select id="active-${row.id}"><option value="true" ${row.active ? 'selected' : ''}>Yes</option><option value="false" ${!row.active ? 'selected' : ''}>No</option></select></td>
+    <td><button class="small-button" onclick="saveCategory(${row.id})">Save</button></td>
+  </tr>`).join('');
+}
+
+async function saveCategory(id) {
+  try {
+    await api('/api/categories/' + id, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        account_id: document.getElementById('account-' + id).value || null,
+        active: document.getElementById('active-' + id).value
+      })
+    });
+    showPageMessage('Category updated. Related records were refreshed.');
+    await loadCategories();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+
+categoryForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(event.target));
+    if (!body.account_id) delete body.account_id;
+    await api('/api/categories', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    event.target.reset();
+    showPageMessage('Category added.');
+    await Promise.all([loadAccounts(), loadCategories()]);
+  } catch (err) { showPageMessage(err.message, 'error'); }
+});
+
+kindFilter.addEventListener('change', loadCategories);
+searchFilter.addEventListener('input', loadCategories);
+categoryForm.elements.transaction_kind.addEventListener('change', event => {
+  document.getElementById('newAccount').innerHTML = '<option value="">Generate New Account Code</option>' + accountOptions(event.target.value);
+});
+(async function init(){ await ensureAdmin(); await loadAccounts(); await loadCategories(); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receipt Items - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Receipt Items</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <form id="filterForm">
+      <div class="grid compact">
+        <div><label>Start Date</label><input type="date" name="start_date"></div>
+        <div><label>End Date</label><input type="date" name="end_date"></div>
+        <div><label>Item ID</label><input name="item_id"></div>
+        <div><label>Project</label><select name="project_id" id="projectFilter"><option value="">All</option></select></div>
+        <div><label>Worker</label><select name="worker_id" id="workerFilter"><option value="">All</option></select></div>
+        <div><label>Category</label><select name="category_id" id="categoryFilter"><option value="">All</option></select></div>
+        <div><label>Account</label><select name="account_id" id="accountFilter"><option value="">All</option></select></div>
+        <div><label>Product Name</label><input name="product_name"></div>
+        <div><label>Product Code</label><input name="product_code"></div>
+        <div><label>Group By</label><select name="group_by"><option value="">No Group</option><option value="project">Project</option><option value="store">Store</option><option value="product_name">Product Name</option><option value="product_code">Product Code</option><option value="category">General Category</option><option value="detail_category">Detail Category</option><option value="account">Account</option><option value="worker">Worker</option><option value="month">Month</option></select></div>
+      </div>
+      <br>
+      <div class="grid compact">
+        <button>Apply Filter</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+        <button type="button" class="secondary" onclick="exportCsv()">Export CSV</button>
+      </div>
+    </form>
+  </div>
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+
+<dialog id="editDialog">
+  <div class="dialog-body">
+    <h2>Edit Receipt Item</h2>
+    <form id="editForm">
+      <input type="hidden" name="id">
+      <div class="grid">
+        <div><label>Product Name</label><input name="product_name"></div>
+        <div><label>Product Code</label><input name="product_code"></div>
+        <div><label>Quantity</label><input type="number" step="0.001" name="quantity"></div>
+        <div><label>Unit Price</label><input type="number" step="0.01" name="unit_price"></div>
+        <div><label>Item Total</label><input type="number" step="0.01" name="item_total"></div>
+        <div><label>Project</label><select name="project_id" id="editProject"><option value="">No project</option></select></div>
+        <div><label>Category</label><select name="category_id" id="editCategory"><option value="">Missing</option></select></div>
+      </div>
+      <br><label>Correction Note</label><textarea name="correction_note" rows="2"></textarea>
+      <div class="dialog-actions">
+        <button type="button" class="secondary" onclick="editDialog.close()">Cancel</button>
+        <button>Save Changes</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script src="/common.js"></script>
+<script>
+let workers = [], projects = [], categories = [], accounts = [], currentRows = [];
+const filterForm = document.getElementById('filterForm');
+const table = document.getElementById('table');
+const editDialog = document.getElementById('editDialog');
+const editForm = document.getElementById('editForm');
+
+function categoryOptions(rows, selected = '') {
+  return rows.map(row => `<option value="${row.id}" ${String(row.id) === String(selected) ? 'selected' : ''}>${escapeHtml(row.display_name)}</option>`).join('');
+}
+function accountOptions(rows) {
+  return rows.map(row => `<option value="${row.id}">${escapeHtml(row.account_code)} - ${escapeHtml(row.account_name)}</option>`).join('');
+}
+
+async function loadLookups() {
+  [workers, projects, categories, accounts] = await Promise.all([
+    api('/api/lookups/workers'), api('/api/lookups/projects'),
+    api('/api/lookups/categories?kind=expense'), api('/api/lookups/accounts?kind=expense')
+  ]);
+  document.getElementById('workerFilter').innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
+  document.getElementById('projectFilter').innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
+  document.getElementById('categoryFilter').innerHTML = '<option value="">All</option>' + categoryOptions(categories);
+  document.getElementById('accountFilter').innerHTML = '<option value="">All</option>' + accountOptions(accounts);
+}
+function currentParams() { return formParams(filterForm); }
+async function loadItems() {
+  const data = await api('/api/receipt-items?' + currentParams().toString());
+  if (data.mode === 'grouped') renderGrouped(data.rows);
+  else {
+    currentRows = data.rows;
+    renderList(data.rows);
+  }
+}
+function renderGrouped(rows) {
+  table.innerHTML = `<tr><th>Group</th><th>Item Count</th><th>Total Quantity</th><th>Total Amount</th></tr>` +
+    rows.map(row => `<tr><td>${escapeHtml(row.group_value)}</td><td>${row.item_count}</td><td>${row.total_quantity}</td><td>${money(row.total_amount)}</td></tr>`).join('');
+}
+function renderList(rows) {
+  table.innerHTML = `<tr><th>Item ID</th><th>Receipt #</th><th>Date</th><th>Store</th><th>Worker</th><th>Product</th><th>Code</th><th>Qty</th><th>Unit Price</th><th>Item Total</th><th>Project</th><th>Category / Account</th><th>Corrected</th><th>Action</th></tr>` +
+    rows.map(row => `<tr>
+      <td>${row.item_id}</td><td>${escapeHtml(row.receipt_number)}</td><td>${dateOnly(row.receipt_date)}</td>
+      <td>${escapeHtml(row.store)}</td><td>${escapeHtml(row.worker_name)}</td>
+      <td>${escapeHtml(row.product_name)}</td><td>${escapeHtml(row.product_code)}</td>
+      <td>${row.quantity ?? ''}</td><td>${money(row.unit_price)}</td><td>${money(row.item_total)}</td>
+      <td>${escapeHtml(row.project_name)}</td>
+      <td><strong>${escapeHtml(row.category_group)}</strong><br><span class="small">${escapeHtml(row.category_name)}</span><br><span class="small code">${escapeHtml(row.account_code)} ${escapeHtml(row.account_name)}</span></td>
+      <td>${row.corrected ? '<span class="flag good">Yes</span>' : 'No'}</td>
+      <td><button class="small-button" onclick="openEdit(${row.item_id})">Edit</button></td>
+    </tr>`).join('');
+}
+function openEdit(id) {
+  const row = currentRows.find(item => Number(item.item_id) === Number(id));
+  if (!row) return showPageMessage('Receipt item not found in the current list.', 'error');
+  editForm.elements.id.value = row.item_id;
+  editForm.elements.product_name.value = row.product_name || '';
+  editForm.elements.product_code.value = row.product_code || '';
+  editForm.elements.quantity.value = row.quantity ?? '';
+  editForm.elements.unit_price.value = row.unit_price ?? '';
+  editForm.elements.item_total.value = row.item_total ?? '';
+  document.getElementById('editProject').innerHTML = '<option value="">No project</option>' + optionHtml(projects, 'id', 'name', row.project_id);
+  document.getElementById('editCategory').innerHTML = '<option value="">Missing</option>' + categoryOptions(categories, row.category_id);
+  editForm.elements.correction_note.value = row.correction_note || '';
+  editDialog.showModal();
+}
+editForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(event.target));
+    const id = body.id;
+    delete body.id;
+    await api('/api/receipt-items/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    editDialog.close();
+    showPageMessage('Receipt item updated.');
+    await loadItems();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+});
+function clearFilters() { filterForm.reset(); loadItems().catch(err => showPageMessage(err.message, 'error')); }
+function exportCsv() { window.location.href = '/api/receipt-items/export.csv?' + currentParams().toString(); }
+filterForm.addEventListener('submit', event => { event.preventDefault(); loadItems().catch(err => showPageMessage(err.message, 'error')); });
+(async function init(){ await ensureAdmin(); await loadLookups(); await loadItems(); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>
