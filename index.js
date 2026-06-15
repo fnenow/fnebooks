@@ -47,7 +47,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 app.use(session({
-  store: new pgSession({ pool, tableName: 'user_sessions', createTableIfMissing: true }),
+  store: new pgSession({ pool, tableName: 'user_sessions', createTableIfMissing: false }),
   name: 'fnebooks.sid',
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -107,7 +107,7 @@ function clearLoginFailures(type, req) {
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ ok: true, app: 'FNEBooks', version: '1.2.0', database: 'connected' });
+    res.json({ ok: true, app: 'FNEBooks', version: '1.2.2', database: 'connected' });
   } catch (err) {
     console.error(err);
     res.status(503).json({ ok: false, app: 'FNEBooks', database: 'unavailable' });
@@ -180,5 +180,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`FNEBooks v1.2 running on port ${PORT}`);
+  console.log(`FNEBooks v1.2.2 running on port ${PORT}`);
 });

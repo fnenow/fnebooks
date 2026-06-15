@@ -148,3 +148,14 @@ npm start
 - `data/category_master.json`
 - `data/chart_accounts_seed.json`
 - `data/category_seed.sql`
+
+
+## v1.2.2 session-table fix
+
+FNEBooks uses a dedicated `user_sessions` table. If an older deployment shows `relation "session_pkey" already exists` after login, update the code to v1.2.2 and run:
+
+```bash
+psql "$DATABASE_URL" -f migrations/004_session_table_fix.sql
+```
+
+This avoids conflicts with another app using a generic `session` table in the shared PostgreSQL database.

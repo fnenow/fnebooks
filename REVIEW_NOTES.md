@@ -35,3 +35,10 @@
 - Income transaction tables/pages.
 - Object storage migration for receipt files.
 - Admin UI to edit account-code rules.
+
+
+## v1.2.2 fix
+
+- Disabled connect-pg-simple automatic session-table creation.
+- Added explicit `user_sessions` table migration with non-conflicting primary key/index names.
+- Fixes shared-database error: `relation "session_pkey" already exists`.
