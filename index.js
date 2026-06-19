@@ -184,3 +184,215 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`FNEBooks v1.2.2 running on port ${PORT}`);
 });
+
+const multer = require("multer");
+const { uploadReceiptToDrive } = require("./services/googleDrive");
+const { extractReceipt } = require("./services/aiReceipt");
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+});
+
+app.post("/api/receipts/upload", upload.single("receipt"), async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: "Receipt image is required." });
+    }
+
+    const workerId = req.body.worker_id || null;
+    const projectId = req.body.project_id || null;
+    const userNote = req.body.note || "";
+
+    const now = new Date();
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storedFilename = `${now.toISOString().slice(0, 10)}_${Date.now()}_${safeName}`;
+
+    const driveResult = await uploadReceiptToDrive(file, storedFilename);
+
+    const uploadInsert = await pool.query(
+      `
+      INSERT INTO receipt_uploads (
+        worker_id,
+        project_id,
+        original_filename,
+        stored_filename,
+        mime_type,
+        file_size,
+        google_drive_file_id,
+        google_drive_web_view_link,
+        ai_status
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'uploaded')
+      RETURNING id
+      `,
+      [
+        workerId,
+        projectId,
+        file.originalname,
+        storedFilename,
+        file.mimetype,
+        file.size,
+        driveResult.fileId,
+        driveResult.webViewLink,
+      ]
+    );
+
+    const uploadId = uploadInsert.rows[0].id;
+
+    await pool.query(
+      `UPDATE receipt_uploads SET ai_status = 'processing' WHERE id = $1`,
+      [uploadId]
+    );
+
+    const aiResult = await extractReceipt(file);
+    const r = aiResult.data;
+
+    const needsReview =
+      !r.receipt_date ||
+      !r.store ||
+      !r.total ||
+      Number(r.confidence || 0) < 80 ||
+      (r.missing_fields && r.missing_fields.length > 0);
+
+    await client.query("BEGIN");
+
+    const receiptInsert = await client.query(
+      `
+      INSERT INTO receipts (
+        receipt_date,
+        receipt_number,
+        worker_id,
+        store,
+        project_id,
+        category,
+        amount,
+        tax,
+        total,
+        payment_method,
+        note,
+        upload_id,
+        ai_provider,
+        ai_confidence,
+        ai_raw_json,
+        google_drive_file_id,
+        google_drive_web_view_link,
+        corrected
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,false)
+      RETURNING id
+      `,
+      [
+        r.receipt_date,
+        r.receipt_number,
+        workerId,
+        r.store,
+        projectId,
+        r.category || "Other",
+        r.subtotal,
+        r.tax,
+        r.total,
+        r.payment_method || "unknown",
+        userNote || r.note || "",
+        uploadId,
+        aiResult.provider,
+        r.confidence,
+        r,
+        driveResult.fileId,
+        driveResult.webViewLink,
+      ]
+    );
+
+    const receiptId = receiptInsert.rows[0].id;
+
+    for (const item of r.items || []) {
+      await client.query(
+        `
+        INSERT INTO receipt_items (
+          receipt_id,
+          upload_id,
+          receipt_number,
+          receipt_date,
+          store,
+          worker_id,
+          project_id,
+          product_name,
+          product_code,
+          quantity,
+          unit_price,
+          item_total,
+          category,
+          corrected
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false)
+        `,
+        [
+          receiptId,
+          uploadId,
+          r.receipt_number,
+          r.receipt_date,
+          r.store,
+          workerId,
+          projectId,
+          item.product_name,
+          item.product_code,
+          item.quantity,
+          item.unit_price,
+          item.item_total,
+          item.category || r.category || "Other",
+        ]
+      );
+    }
+
+    await client.query(
+      `
+      UPDATE receipt_uploads
+      SET
+        ai_status = $1,
+        ai_provider = $2,
+        ai_model = $3,
+        ai_confidence = $4,
+        ai_raw_json = $5,
+        receipt_id = $6,
+        processed_at = NOW()
+      WHERE id = $7
+      `,
+      [
+        needsReview ? "needs_review" : "processed",
+        aiResult.provider,
+        aiResult.model,
+        r.confidence,
+        r,
+        receiptId,
+        uploadId,
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      receipt_id: receiptId,
+      upload_id: uploadId,
+      ai_status: needsReview ? "needs_review" : "processed",
+      confidence: r.confidence,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+
+    console.error(error);
+
+    res.status(500).json({
+      error: "Receipt processing failed.",
+      detail: error.message,
+    });
+  } finally {
+    client.release();
+  }
+});
