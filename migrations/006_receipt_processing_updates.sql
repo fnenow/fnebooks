@@ -1,3 +1,4 @@
+
 -- Receipt processing compatibility updates
 -- Safe to run more than once.
 
@@ -19,6 +20,7 @@ ADD COLUMN IF NOT EXISTS google_drive_web_view_link TEXT;
 ALTER TABLE receipt_items
 ADD COLUMN IF NOT EXISTS upload_id INTEGER REFERENCES receipt_uploads(id);
 
+<<<<<<< HEAD
 CREATE INDEX IF NOT EXISTS idx_receipt_uploads_status_created
 ON receipt_uploads(ai_status, created_at DESC);
 
@@ -27,3 +29,5 @@ ON receipts(upload_id);
 
 CREATE INDEX IF NOT EXISTS idx_receipt_items_upload_id
 ON receipt_items(upload_id);
+=======
+>>>>>>> 2209a6b (ok)
