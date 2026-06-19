@@ -10,6 +10,7 @@ const lookupRoutes = require('./routes/lookups');
 const categoryRoutes = require('./routes/categories');
 const accountRoutes = require('./routes/accounts');
 const receiptRoutes = require('./routes/receipts');
+const receiptProcessingRoutes = require('./routes/receiptProcessing');
 const receiptItemRoutes = require('./routes/receiptItems');
 const settingsRoutes = require('./routes/settings');
 
@@ -161,6 +162,7 @@ app.get('/api/me', (req, res) => {
 app.use('/api/lookups', requireUploader, lookupRoutes);
 app.use('/api/categories', requireAdmin, categoryRoutes);
 app.use('/api/accounts', requireAdmin, accountRoutes);
+app.use('/api/receipts', receiptProcessingRoutes({ requireUploader }));
 app.use('/api/receipts', receiptRoutes({ requireAdmin, requireUploader }));
 app.use('/api/receipt-items', requireAdmin, receiptItemRoutes);
 app.use('/api/settings', requireAdmin, settingsRoutes);
