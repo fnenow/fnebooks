@@ -24,6 +24,7 @@
     "openai": "^6.44.0",
     "pg": "8.21.0",
     "zod": "^4.4.3",
-    "zod-to-json-schema": "^3.25.2"
+    "zod-to-json-schema": "^3.25.2",
+    "sharp": "^0.34.3"
   }
 }
