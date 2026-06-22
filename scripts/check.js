@@ -3,7 +3,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
-const directories = ['', 'routes', 'services', 'scripts', 'public'];
+const directories = ['', 'routes', 'services', 'middleware', 'scripts', 'public'];
 const files = [];
 
 for (const directory of directories) {

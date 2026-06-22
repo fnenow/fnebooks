@@ -64,6 +64,7 @@
         <div><label>Subtotal</label><input type="number" step="0.01" name="subtotal"></div>
         <div><label>Tax</label><input type="number" step="0.01" name="tax"></div>
         <div><label>Total</label><input type="number" step="0.01" name="total"></div>
+        <div><label>Payment Method</label><input name="payment_method" placeholder="cash, check, or last 4 digits"></div>
         <div><label>Follow Up</label><select name="follow_up"><option value="">Blank</option><option>reimburse</option><option>collect</option></select></div>
       </div>
       <br><label>Note</label><textarea name="note" rows="2"></textarea>
@@ -125,7 +126,7 @@ function renderList(rows) {
       <td>${escapeHtml(row.payment_method)}</td>
       <td><select class="inline-select" onchange="updateFollowUp(${row.id}, this.value)"><option value="">Blank</option><option value="reimburse" ${row.follow_up === 'reimburse' ? 'selected' : ''}>reimburse</option><option value="collect" ${row.follow_up === 'collect' ? 'selected' : ''}>collect</option></select></td>
       <td>${row.corrected ? '<span class="flag good">Corrected</span>' : ''}${row.missing_info ? '<span class="flag warning">Missing Info</span>' : ''}</td>
-      <td class="row-actions"><button onclick="openEdit(${row.id})">Edit</button><button onclick="viewFile(${row.id})">File</button><button class="danger" onclick="deleteReceipt(${row.id})">Deactivate</button></td>
+      <td class="row-actions"><button onclick="openEdit(${row.id})">Edit</button><button onclick="viewFile(${row.id})">File</button><button class="danger" onclick="deleteReceipt(${row.id})">Delete</button></td>
     </tr>`).join('');
 }
 
@@ -142,6 +143,7 @@ async function openEdit(id) {
     editForm.elements.subtotal.value = row.subtotal ?? '';
     editForm.elements.tax.value = row.tax ?? '';
     editForm.elements.total.value = row.total ?? '';
+    editForm.elements.payment_method.value = row.payment_method || '';
     editForm.elements.follow_up.value = row.follow_up || '';
     editForm.elements.note.value = row.note || '';
     editForm.elements.correction_note.value = row.correction_note || '';
@@ -170,9 +172,10 @@ async function updateFollowUp(id, value) {
 }
 function viewFile(id) { window.open('/api/receipts/' + id + '/file', '_blank', 'noopener'); }
 async function deleteReceipt(id) {
-  if (!confirm('Deactivate this receipt? It will remain in the database but disappear from active lists.')) return;
+  if (!confirm('Delete this receipt permanently? This also removes its receipt items so account and balance summaries update.')) return;
   try {
     await api('/api/receipts/' + id, { method: 'DELETE' });
+    showPageMessage('Receipt deleted. Account and balance summaries will no longer include it.');
     await loadReceipts();
   } catch (err) { showPageMessage(err.message, 'error'); }
 }

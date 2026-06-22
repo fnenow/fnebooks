@@ -59,6 +59,12 @@
   <div class="card scroll"><table id="table"></table></div>
 
   <div class="card">
+    <h2>Balance Summary</h2>
+    <p class="small">Calculated from active receipts. Deleting a receipt removes it from these balances.</p>
+    <div class="scroll"><table id="balancesTable"></table></div>
+  </div>
+
+  <div class="card">
     <h2>Account-Code Rules</h2>
     <div class="scroll"><table id="rulesTable"></table></div>
   </div>
@@ -68,6 +74,7 @@
 const filterForm = document.getElementById('filterForm');
 const table = document.getElementById('table');
 const rulesTable = document.getElementById('rulesTable');
+const balancesTable = document.getElementById('balancesTable');
 
 async function loadAccounts() {
   const rows = await api('/api/accounts?' + formParams(filterForm).toString());
@@ -83,6 +90,21 @@ async function loadAccounts() {
     <td>${dateOnly(row.created_at)}</td>
     <td><select id="active-${row.id}"><option value="true" ${row.active ? 'selected' : ''}>Yes</option><option value="false" ${!row.active ? 'selected' : ''}>No</option></select></td>
     <td><button class="small-button" onclick="saveAccount(${row.id})">Save</button></td>
+  </tr>`).join('');
+}
+
+
+async function loadBalances() {
+  const rows = await api('/api/accounts/balances');
+  balancesTable.innerHTML = `<tr><th>Code</th><th>Name</th><th>Kind</th><th>Accounting Type</th><th>Normal</th><th>Receipts</th><th>Total</th><th>Signed Balance</th></tr>` + rows.map(row => `<tr>
+    <td class="code">${escapeHtml(row.account_code)}</td>
+    <td>${escapeHtml(row.account_name)}</td>
+    <td>${escapeHtml(row.transaction_kind)}</td>
+    <td>${escapeHtml(row.accounting_type)}</td>
+    <td>${escapeHtml(row.normal_balance)}</td>
+    <td>${row.receipt_count}</td>
+    <td>${money(row.receipt_total)}</td>
+    <td>${money(row.signed_balance)}</td>
   </tr>`).join('');
 }
 
@@ -112,7 +134,7 @@ async function saveAccount(id) {
       })
     });
     showPageMessage('Account updated. Related category, receipt, and item snapshots were refreshed.');
-    await loadAccounts();
+    await Promise.all([loadAccounts(), loadBalances()]);
   } catch (err) { showPageMessage(err.message, 'error'); }
 }
 
@@ -125,13 +147,13 @@ accountForm.addEventListener('submit', async event => {
     await api('/api/accounts', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     event.target.reset();
     showPageMessage('Account added.');
-    await Promise.all([loadAccounts(), loadRules()]);
+    await Promise.all([loadAccounts(), loadBalances(), loadRules()]);
   } catch (err) { showPageMessage(err.message, 'error'); }
 });
 
 filterForm.addEventListener('submit', event => { event.preventDefault(); loadAccounts().catch(err => showPageMessage(err.message, 'error')); });
 function clearFilters() { filterForm.reset(); loadAccounts().catch(err => showPageMessage(err.message, 'error')); }
-(async function init(){ await ensureAdmin(); await Promise.all([loadAccounts(), loadRules()]); })().catch(err => showPageMessage(err.message, 'error'));
+(async function init(){ await ensureAdmin(); await Promise.all([loadAccounts(), loadBalances(), loadRules()]); })().catch(err => showPageMessage(err.message, 'error'));
 </script>
 </body>
 </html>
