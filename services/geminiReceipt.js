@@ -122,7 +122,13 @@ Category rule:
         ]
       }],
       generationConfig: {
-        response_mime_type: 'application/json'
+        response_mime_type: 'application/json',
+        temperature: 0,
+        // A multi-receipt PDF with many line items produces long JSON. Give it
+        // plenty of room and turn off "thinking" tokens on 2.5-flash models so
+        // the whole budget goes to the JSON output instead of being truncated.
+        maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS) || 8192,
+        ...(/2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {})
       }
     })
   });
@@ -140,16 +146,23 @@ Category rule:
     throw new Error(message);
   }
 
-  const text = parsedResponse.candidates?.[0]?.content?.parts
+  const candidate = parsedResponse.candidates?.[0];
+  const finishReason = candidate?.finishReason;
+  const truncated = finishReason === 'MAX_TOKENS';
+  const text = candidate?.content?.parts
     ?.map(part => part.text || '')
     .join('') || '';
 
-  if (!text) throw new Error('Gemini did not return receipt JSON');
+  if (!text) {
+    if (truncated) throw new Error('Gemini hit its output token limit before returning any receipt JSON. Raise GEMINI_MAX_OUTPUT_TOKENS or upload fewer pages at once.');
+    throw new Error('Gemini did not return receipt JSON');
+  }
 
   let receiptJson;
   try {
     receiptJson = JSON.parse(stripCodeFence(text));
   } catch {
+    if (truncated) throw new Error('Gemini response was cut off at the output token limit, so the receipt JSON is incomplete. Raise GEMINI_MAX_OUTPUT_TOKENS or upload fewer pages/receipts at once.');
     throw new Error(`Gemini receipt JSON could not be parsed: ${text.slice(0, 200)}`);
   }
 
