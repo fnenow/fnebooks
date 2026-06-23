@@ -13,8 +13,10 @@
     <a href="/upload_receipt.html">Upload</a>
     <a href="/receipts.html">Receipts</a>
     <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/balance_sheet.html">Balance Sheet</a>
     <a href="/categories.html">Categories</a>
     <a href="/accounts.html">Accounts</a>
+    <a href="/payment_methods.html">Payment Methods</a>
     <a href="/settings.html">Settings</a>
     <button onclick="logout()">Logout</button>
   </nav>
@@ -36,6 +38,7 @@
         <div><label>Follow Up</label><select name="follow_up"><option value="">All</option><option>reimburse</option><option>collect</option></select></div>
         <div><label>Corrected</label><select name="corrected"><option value="">All</option><option value="yes">Yes</option><option value="no">No</option></select></div>
         <div><label>Missing Info Only</label><select name="missing_info_only"><option value="">No</option><option value="true">Yes</option></select></div>
+        <div><label>Status</label><select name="status"><option value="active">Active</option><option value="inactive">Deactivated</option><option value="all">All</option></select></div>
         <div><label>Group By</label><select name="group_by"><option value="">No Group</option><option value="project">Project</option><option value="worker">Worker</option><option value="category">General Category</option><option value="detail_category">Detail Category</option><option value="account">Account</option><option value="store">Store</option><option value="payment_method">Payment Method</option><option value="follow_up">Follow Up</option><option value="month">Month</option></select></div>
       </div>
       <br>
@@ -64,7 +67,7 @@
         <div><label>Subtotal</label><input type="number" step="0.01" name="subtotal"></div>
         <div><label>Tax</label><input type="number" step="0.01" name="tax"></div>
         <div><label>Total</label><input type="number" step="0.01" name="total"></div>
-        <div><label>Payment Method</label><input name="payment_method" placeholder="cash, check, or last 4 digits"></div>
+        <div><label>Payment Method</label><input name="payment_method" list="paymentMethodsList" placeholder="cash, check, or last 4 digits"><datalist id="paymentMethodsList"></datalist></div>
         <div><label>Follow Up</label><select name="follow_up"><option value="">Blank</option><option>reimburse</option><option>collect</option></select></div>
       </div>
       <br><label>Note</label><textarea name="note" rows="2"></textarea>
@@ -79,7 +82,7 @@
 
 <script src="/common.js"></script>
 <script>
-let workers = [], projects = [], categories = [], accounts = [];
+let workers = [], projects = [], categories = [], accounts = [], paymentMethods = [];
 const filterForm = document.getElementById('filterForm');
 const table = document.getElementById('table');
 const editDialog = document.getElementById('editDialog');
@@ -93,14 +96,16 @@ function accountOptions(rows, selected = '') {
 }
 
 async function loadLookups() {
-  [workers, projects, categories, accounts] = await Promise.all([
+  [workers, projects, categories, accounts, paymentMethods] = await Promise.all([
     api('/api/lookups/workers'), api('/api/lookups/projects'),
-    api('/api/lookups/categories?kind=expense'), api('/api/lookups/accounts?kind=expense')
+    api('/api/lookups/categories?kind=expense'), api('/api/lookups/accounts?kind=expense'),
+    api('/api/lookups/payment-methods')
   ]);
   document.getElementById('workerFilter').innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
   document.getElementById('projectFilter').innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
   document.getElementById('categoryFilter').innerHTML = '<option value="">All</option>' + categoryOptions(categories);
   document.getElementById('accountFilter').innerHTML = '<option value="">All</option>' + accountOptions(accounts);
+  document.getElementById('paymentMethodsList').innerHTML = paymentMethods.map(pm => `<option value="${escapeHtml(pm.name)}">`).join('');
 }
 
 function currentParams() { return formParams(filterForm); }
@@ -123,10 +128,10 @@ function renderList(rows) {
       <td>${escapeHtml(row.project_name)}</td>
       <td><strong>${escapeHtml(row.category_group)}</strong><br><span class="small">${escapeHtml(row.category_name)}</span><br><span class="small code">${escapeHtml(row.account_code)} ${escapeHtml(row.account_name)}</span></td>
       <td>${money(row.total)}</td>
-      <td>${escapeHtml(row.payment_method)}</td>
+      <td><input class="inline-input" list="paymentMethodsList" value="${escapeHtml(row.payment_method)}" onchange="changePayment(${row.id}, this.value)"></td>
       <td><select class="inline-select" onchange="updateFollowUp(${row.id}, this.value)"><option value="">Blank</option><option value="reimburse" ${row.follow_up === 'reimburse' ? 'selected' : ''}>reimburse</option><option value="collect" ${row.follow_up === 'collect' ? 'selected' : ''}>collect</option></select></td>
-      <td>${row.corrected ? '<span class="flag good">Corrected</span>' : ''}${row.missing_info ? '<span class="flag warning">Missing Info</span>' : ''}</td>
-      <td class="row-actions"><button onclick="openEdit(${row.id})">Edit</button><button onclick="viewFile(${row.id})">File</button><button class="danger" onclick="deleteReceipt(${row.id})">Delete</button></td>
+      <td>${row.corrected ? '<span class="flag good">Corrected</span>' : ''}${row.missing_info ? '<span class="flag warning">Missing Info</span>' : ''}${row.active === false ? '<span class="flag warning">Deactivated</span>' : ''}</td>
+      <td class="row-actions"><button onclick="openEdit(${row.id})">Edit</button><button onclick="viewFile(${row.id})">File</button>${row.active === false ? `<button class="secondary" onclick="reactivateReceipt(${row.id})">Reactivate</button>` : `<button class="secondary" onclick="deactivateReceipt(${row.id})">Deactivate</button>`}<button class="danger" onclick="deleteReceipt(${row.id})">Delete</button></td>
     </tr>`).join('');
 }
 
@@ -167,6 +172,28 @@ editForm.addEventListener('submit', async event => {
 async function updateFollowUp(id, value) {
   try {
     await api('/api/receipts/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ follow_up: value || null, correction_note: 'Follow Up updated by admin' }) });
+    await loadReceipts();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+async function changePayment(id, value) {
+  try {
+    await api('/api/receipts/' + id, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ payment_method: value || null, correction_note: 'Payment method updated by admin' }) });
+    showPageMessage('Payment method updated. Balance sheet refreshed.');
+    await loadReceipts();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+async function deactivateReceipt(id) {
+  if (!confirm('Deactivate this receipt? It is removed from the balance sheet and spending totals, and its line items are deactivated too.')) return;
+  try {
+    await api('/api/receipts/' + id + '/deactivate', { method: 'POST' });
+    showPageMessage('Receipt and its items deactivated.');
+    await loadReceipts();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+async function reactivateReceipt(id) {
+  try {
+    await api('/api/receipts/' + id + '/reactivate', { method: 'POST' });
+    showPageMessage('Receipt and its items reactivated.');
     await loadReceipts();
   } catch (err) { showPageMessage(err.message, 'error'); }
 }

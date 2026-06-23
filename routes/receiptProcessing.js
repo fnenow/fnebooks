@@ -1,9 +1,9 @@
 const express = require('express');
 const { pool } = require('../db');
 const { uploadReceiptToDrive, safeStoredFilename, hasDriveUploadConfig } = require('../services/appsScriptDrive');
-const { extractReceiptWithGemini, hasGeminiConfig } = require('../services/geminiReceipt');
+const { extractReceiptsWithGemini, hasGeminiConfig } = require('../services/geminiReceipt');
 const { cleanText, cleanNumber, cleanInt, isIsoDate, safeFilename } = require('./helpers');
-const { receiveReceiptFile } = require('../middleware/receiptUpload');
+const { receiveReceiptFiles } = require('../middleware/receiptUpload');
 const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
 
 function firstText(...values) {
@@ -33,10 +33,6 @@ function cleanPaymentMethod(value) {
   return 'unknown';
 }
 
-function simpleItems(aiData) {
-  return Array.isArray(aiData.items) ? aiData.items.slice(0, 250) : [];
-}
-
 function parseItemsJson(value) {
   if (!value) return null;
   let items;
@@ -52,6 +48,10 @@ function parseItemsJson(value) {
     throw Object.assign(new Error('A receipt cannot contain more than 250 line items'), { statusCode: 400 });
   }
   return items;
+}
+
+function aiItems(aiReceipt) {
+  return Array.isArray(aiReceipt.items) ? aiReceipt.items.slice(0, 250) : [];
 }
 
 async function loadCategories(client) {
@@ -103,13 +103,108 @@ async function snapshot(client, workerId, projectId, categoryId) {
   return data;
 }
 
+// Build one receipt's field set from the request body and/or an AI-extracted
+// receipt. When applyManual is true (a single receipt entered by hand) the body
+// fields win; for batch uploads we trust the AI values but still attribute the
+// receipt to the worker/project chosen on the form.
+function buildReceiptFields(body, aiReceipt, applyManual) {
+  const ai = aiReceipt || {};
+  return {
+    receipt_number: applyManual ? firstText(body.receipt_number, ai.receipt_number) : cleanText(ai.receipt_number),
+    receipt_date: applyManual ? firstText(body.receipt_date, ai.receipt_date) : cleanText(ai.receipt_date),
+    worker_id: cleanInt(body.worker_id),
+    store: applyManual ? firstText(body.store, ai.store) : cleanText(ai.store),
+    project_id: cleanInt(body.project_id),
+    subtotal: applyManual ? firstNumber(body.subtotal, ai.subtotal) : cleanNumber(ai.subtotal),
+    tax: applyManual ? firstNumber(body.tax, ai.tax) : cleanNumber(ai.tax),
+    total: applyManual ? firstNumber(body.total, ai.total) : cleanNumber(ai.total),
+    payment_method: applyManual
+      ? firstText(body.payment_method, cleanPaymentMethod(ai.payment_method))
+      : cleanPaymentMethod(ai.payment_method),
+    note: applyManual ? firstText(body.note, ai.note) : cleanText(ai.note),
+    ai_confidence: firstNumber(ai.confidence)
+  };
+}
+
+// Insert one receipt (plus its line items, and the stored file when needed)
+// inside an open transaction. Returns a short summary for the response.
+async function createReceipt(client, ctx) {
+  const { body, ai, aiReceipt, applyManual, followUp, manualItems, file, drive, uploadId, storeFile } = ctx;
+
+  const row = buildReceiptFields(body, aiReceipt, applyManual);
+  const categoryId = (applyManual ? cleanInt(body.category_id) : null)
+    || cleanInt(aiReceipt?.category_id)
+    || await findCategoryId(client, aiReceipt?.category);
+  row.category_id = categoryId;
+
+  if (row.receipt_date && !isIsoDate(row.receipt_date)) {
+    if (applyManual) throw Object.assign(new Error('Receipt date must use YYYY-MM-DD format'), { statusCode: 400 });
+    row.receipt_date = null;
+  }
+
+  const snap = await snapshot(client, row.worker_id, row.project_id, row.category_id);
+  const missingInfo = !row.receipt_date || !row.store || !row.worker_id || !row.category_id ||
+    row.total === null || (snap.project_required === 'Yes' && !row.project_id);
+
+  const receiptResult = await client.query(`
+    INSERT INTO receipts (receipt_number, receipt_date, worker_id, worker_name, store, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name, subtotal, tax, total, payment_method, follow_up, note, source_file_name, source_mime_type, ai_confidence, ai_provider, ai_model, ai_raw_json, google_drive_file_id, google_drive_web_view_link, upload_id, missing_info)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING *
+  `, [
+    row.receipt_number, row.receipt_date || null, row.worker_id, snap.worker_name, row.store,
+    row.project_id, snap.project_name, row.category_id, snap.category_name, snap.category_group,
+    snap.category_type, snap.accounting_type, snap.account_id, snap.account_code, snap.account_name,
+    row.subtotal, row.tax, row.total, row.payment_method, followUp || null, row.note,
+    file?.originalname || null, file?.mimetype || null, row.ai_confidence,
+    ai?.provider || null, ai?.model || null,
+    ai ? JSON.stringify(aiReceipt) : null,
+    drive?.fileId || null, drive?.webViewLink || null, uploadId, missingInfo
+  ]);
+  const receipt = receiptResult.rows[0];
+
+  // Store the original file in PostgreSQL once per uploaded file when Google
+  // Drive is not configured. Receipts that share a file resolve it by upload_id.
+  if (file && !drive && storeFile) {
+    await client.query(`
+      INSERT INTO receipt_files (receipt_id, filename, mime_type, size_bytes, file_data)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (receipt_id) DO UPDATE SET
+        filename = EXCLUDED.filename,
+        mime_type = EXCLUDED.mime_type,
+        size_bytes = EXCLUDED.size_bytes,
+        file_data = EXCLUDED.file_data
+    `, [receipt.id, safeFilename(file.originalname), file.mimetype, file.size, file.buffer]);
+  }
+
+  const items = (applyManual && manualItems) ? manualItems : aiItems(aiReceipt || {});
+  for (const item of items) {
+    await client.query(`
+      INSERT INTO receipt_items (receipt_id, upload_id, receipt_number, receipt_date, store, worker_id, worker_name, product_name, product_code, quantity, unit_price, item_total, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+    `, [receipt.id, uploadId, receipt.receipt_number, receipt.receipt_date, receipt.store, receipt.worker_id, receipt.worker_name, cleanText(item.product_name), cleanText(item.product_code), cleanNumber(item.quantity), cleanNumber(item.unit_price), cleanNumber(item.item_total), receipt.project_id, receipt.project_name, receipt.category_id, receipt.category_name, receipt.category_group, receipt.category_type, receipt.accounting_type, receipt.account_id, receipt.account_code, receipt.account_name]);
+  }
+
+  const needsReview = missingInfo || Number(row.ai_confidence || 0) < 80;
+  return {
+    receipt,
+    id: receipt.id,
+    source_file_name: file?.originalname || null,
+    ai_status: needsReview ? 'needs_review' : 'processed',
+    ai_confidence: row.ai_confidence,
+    missing_info: missingInfo,
+    google_drive_link: drive?.webViewLink || null
+  };
+}
+
 module.exports = ({ requireUploader }) => {
   const router = express.Router();
 
-  router.post('/', requireUploader, receiveReceiptFile, async (req, res) => {
+  router.post('/', requireUploader, receiveReceiptFiles, async (req, res) => {
     const client = await pool.connect();
     try {
-      if (!req.file && !req.session.isAdmin) return res.status(400).json({ error: 'A receipt image or PDF is required' });
+      const files = req.receiptFiles || [];
+      if (!files.length && !req.session.isAdmin) {
+        return res.status(400).json({ error: 'A receipt image or PDF is required' });
+      }
 
       const manualItems = parseItemsJson(req.body.items_json);
       const followUp = cleanText(req.body.follow_up);
@@ -117,70 +212,62 @@ module.exports = ({ requireUploader }) => {
         return res.status(400).json({ error: 'Follow Up must be reimburse or collect' });
       }
 
-      const originalFile = req.file || null;
-      const file = originalFile ? await optimizeReceiptFile(originalFile) : null;
-      const drive = file && hasDriveUploadConfig() ? await uploadReceiptToDrive(file, safeStoredFilename(file.originalname)) : null;
-      const categories = file && hasGeminiConfig() ? await loadCategories(client) : [];
-      const ai = file && hasGeminiConfig() ? await extractReceiptWithGemini(file, categories) : null;
-      const aiData = ai?.data || {};
-      const categoryId = cleanInt(req.body.category_id) || cleanInt(aiData.category_id) || await findCategoryId(client, aiData.category);
-      const row = {
-        receipt_number: firstText(req.body.receipt_number, aiData.receipt_number),
-        receipt_date: firstText(req.body.receipt_date, aiData.receipt_date),
-        worker_id: cleanInt(req.body.worker_id),
-        store: firstText(req.body.store, aiData.store),
-        project_id: cleanInt(req.body.project_id),
-        category_id: categoryId,
-        subtotal: firstNumber(req.body.subtotal, aiData.subtotal),
-        tax: firstNumber(req.body.tax, aiData.tax),
-        total: firstNumber(req.body.total, aiData.total),
-        payment_method: firstText(req.body.payment_method, cleanPaymentMethod(aiData.payment_method)),
-        note: firstText(req.body.note, aiData.note),
-        ai_confidence: firstNumber(aiData.confidence)
-      };
-      if (!isIsoDate(row.receipt_date)) return res.status(400).json({ error: 'Receipt date must use YYYY-MM-DD format' });
+      const useAi = hasGeminiConfig();
+      const categories = files.length && useAi ? await loadCategories(client) : [];
+      const created = [];
 
       await client.query('BEGIN');
-      const snap = await snapshot(client, row.worker_id, row.project_id, row.category_id);
-      const missingInfo = !row.receipt_date || !row.store || !row.worker_id || !row.category_id || row.total === null || (snap.project_required === 'Yes' && !row.project_id);
 
-      let uploadId = null;
-      if (file) {
-        const u = await client.query(`
-          INSERT INTO receipt_uploads (worker_id, project_id, original_filename, stored_filename, mime_type, file_size, original_file_size, compressed_file_size, compression_quality, image_width, image_height, google_drive_file_id, google_drive_web_view_link, ai_provider, ai_model, ai_status, ai_confidence, ai_raw_json, processed_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW()) RETURNING id
-        `, [row.worker_id, row.project_id, file.originalname, drive?.storedFilename || file.originalname, file.mimetype, file.size, file.originalSize, file.compressedSize, file.compressionQuality, file.imageWidth, file.imageHeight, drive?.fileId || null, drive?.webViewLink || null, ai?.provider || null, ai?.model || null, ai ? 'processed' : 'uploaded', row.ai_confidence, ai?.raw || null]);
-        uploadId = u.rows[0].id;
-      }
+      if (!files.length) {
+        // Admin manual entry without a file: one receipt from the form fields.
+        created.push(await createReceipt(client, {
+          body: req.body, ai: null, aiReceipt: {}, applyManual: true,
+          followUp, manualItems, file: null, drive: null, uploadId: null, storeFile: false
+        }));
+      } else {
+        for (const original of files) {
+          const file = await optimizeReceiptFile(original);
+          const drive = hasDriveUploadConfig()
+            ? await uploadReceiptToDrive(file, safeStoredFilename(file.originalname))
+            : null;
+          const ai = useAi ? await extractReceiptsWithGemini(file, categories) : null;
+          const aiReceipts = ai?.receipts?.length ? ai.receipts : [{}];
 
-      const receiptResult = await client.query(`
-        INSERT INTO receipts (receipt_number, receipt_date, worker_id, worker_name, store, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name, subtotal, tax, total, payment_method, follow_up, note, source_file_name, source_mime_type, ai_confidence, ai_provider, ai_model, ai_raw_json, google_drive_file_id, google_drive_web_view_link, upload_id, missing_info)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING *
-      `, [row.receipt_number, row.receipt_date || null, row.worker_id, snap.worker_name, row.store, row.project_id, snap.project_name, row.category_id, snap.category_name, snap.category_group, snap.category_type, snap.accounting_type, snap.account_id, snap.account_code, snap.account_name, row.subtotal, row.tax, row.total, row.payment_method, followUp || null, row.note, file?.originalname || null, file?.mimetype || null, row.ai_confidence, ai?.provider || null, ai?.model || null, ai?.raw || null, drive?.fileId || null, drive?.webViewLink || null, uploadId, missingInfo]);
-      const receipt = receiptResult.rows[0];
-      if (uploadId) await client.query('UPDATE receipt_uploads SET receipt_id = $1 WHERE id = $2', [receipt.id, uploadId]);
+          // Only merge the typed form fields when this submission resolves to a
+          // single receipt (one file that produced one receipt).
+          const applyManual = files.length === 1 && aiReceipts.length === 1;
 
-      if (file && !drive) {
-        await client.query(`
-          INSERT INTO receipt_files (receipt_id, filename, mime_type, size_bytes, file_data)
-          VALUES ($1,$2,$3,$4,$5)
-          ON CONFLICT (receipt_id) DO UPDATE SET
-            filename = EXCLUDED.filename,
-            mime_type = EXCLUDED.mime_type,
-            size_bytes = EXCLUDED.size_bytes,
-            file_data = EXCLUDED.file_data
-        `, [receipt.id, safeFilename(file.originalname), file.mimetype, file.size, file.buffer]);
-      }
+          const u = await client.query(`
+            INSERT INTO receipt_uploads (worker_id, project_id, original_filename, stored_filename, mime_type, file_size, original_file_size, compressed_file_size, compression_quality, image_width, image_height, google_drive_file_id, google_drive_web_view_link, ai_provider, ai_model, ai_status, ai_confidence, ai_raw_json, processed_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW()) RETURNING id
+          `, [cleanInt(req.body.worker_id), cleanInt(req.body.project_id), file.originalname, drive?.storedFilename || file.originalname, file.mimetype, file.size, file.originalSize, file.compressedSize, file.compressionQuality, file.imageWidth, file.imageHeight, drive?.fileId || null, drive?.webViewLink || null, ai?.provider || null, ai?.model || null, ai ? 'processed' : 'uploaded', firstNumber(aiReceipts[0]?.confidence), ai ? JSON.stringify(ai.raw) : null]);
+          const uploadId = u.rows[0].id;
 
-      for (const item of manualItems || simpleItems(aiData)) {
-        await client.query(`
-          INSERT INTO receipt_items (receipt_id, upload_id, receipt_number, receipt_date, store, worker_id, worker_name, product_name, product_code, quantity, unit_price, item_total, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-        `, [receipt.id, uploadId, receipt.receipt_number, receipt.receipt_date, receipt.store, receipt.worker_id, receipt.worker_name, cleanText(item.product_name), cleanText(item.product_code), cleanNumber(item.quantity), cleanNumber(item.unit_price), cleanNumber(item.item_total), receipt.project_id, receipt.project_name, receipt.category_id, receipt.category_name, receipt.category_group, receipt.category_type, receipt.accounting_type, receipt.account_id, receipt.account_code, receipt.account_name]);
+          let storeFile = Boolean(file) && !drive; // store DB file once per file
+          for (const aiReceipt of aiReceipts) {
+            const summary = await createReceipt(client, {
+              body: req.body, ai, aiReceipt, applyManual,
+              followUp, manualItems: applyManual ? manualItems : null,
+              file, drive, uploadId, storeFile
+            });
+            storeFile = false;
+            created.push(summary);
+          }
+        }
       }
 
       await client.query('COMMIT');
-      return res.status(201).json({ ok: true, receipt, ai_status: missingInfo || Number(row.ai_confidence || 0) < 80 ? 'needs_review' : 'processed', ai_confidence: row.ai_confidence, google_drive_link: drive?.webViewLink || null });
+      const first = created[0] || null;
+      return res.status(201).json({
+        ok: true,
+        count: created.length,
+        receipt: first?.receipt || null,
+        receipts: created.map(c => c.receipt),
+        results: created.map(({ receipt, ...rest }) => rest),
+        ai_status: first?.ai_status || null,
+        ai_confidence: first?.ai_confidence ?? null,
+        google_drive_link: first?.google_drive_link || null
+      });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       console.error(err);

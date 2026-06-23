@@ -1,6 +1,6 @@
 {
   "name": "fnebooks",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "private": true,
   "description": "FNEBooks bookkeeping receipt app with AI-friendly categories and chart of accounts",
   "main": "index.js",

@@ -16,7 +16,12 @@ const ITEM_GROUPS = {
 };
 
 function buildItemWhere(query) {
-  const where = ['1 = 1'];
+  // Default to active items; deactivated receipts hide their items too.
+  const status = query.status === 'inactive' ? 'inactive' : query.status === 'all' ? 'all' : 'active';
+  const where = [];
+  if (status === 'active') where.push('active = TRUE');
+  else if (status === 'inactive') where.push('active = FALSE');
+  else where.push('1 = 1');
   const params = [];
   const add = (clause, value) => {
     params.push(value);
