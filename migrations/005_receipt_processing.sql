@@ -1,3 +1,5 @@
+-- UPGRADE-ONLY. Superseded by 006_receipt_processing_updates.sql; on a fresh
+-- install run 006 instead. See migrations/README.md.
 CREATE TABLE IF NOT EXISTS receipt_uploads (
   id SERIAL PRIMARY KEY,
 
