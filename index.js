@@ -163,7 +163,7 @@ app.use('/api/lookups', requireUploader, lookupRoutes);
 app.use('/api/categories', requireAdmin, categoryRoutes);
 app.use('/api/accounts', requireAdmin, accountRoutes);
 app.use('/api/receipts', receiptProcessingRoutes({ requireUploader }));
-app.use('/api/receipts', receiptRoutes({ requireAdmin, requireUploader }));
+app.use('/api/receipts', receiptRoutes({ requireAdmin }));
 app.use('/api/receipt-items', requireAdmin, receiptItemRoutes);
 app.use('/api/settings', requireAdmin, settingsRoutes);
 

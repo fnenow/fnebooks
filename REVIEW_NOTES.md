@@ -29,7 +29,6 @@
 
 ## Still pending
 
-- AI receipt extraction and payment-method extraction.
 - Direct FNEClock worker session integration.
 - Multi-receipt AI batch processing.
 - Income transaction tables/pages.

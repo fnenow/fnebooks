@@ -1,6 +1,6 @@
 # npm Registry Fix
 
-Version 1.2.1 replaces private build-environment package URLs in `package-lock.json` with the public npm registry.
+FNEBooks pins exact dependency versions and resolves everything against the public npm registry in `package-lock.json` (no private build-environment URLs).
 
 Install with:
 

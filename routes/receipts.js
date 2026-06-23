@@ -9,8 +9,6 @@ const {
   requireGroupBy,
   safeFilename
 } = require('./helpers');
-const { receiveReceiptFile } = require('../middleware/receiptUpload');
-const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
 
 const RECEIPT_GROUPS = {
   project: { sql: "COALESCE(project_name, 'Missing Project')" },
@@ -116,30 +114,7 @@ async function loadSnapshots(client, workerId, projectId, categoryId) {
   return snapshot;
 }
 
-function parseItems(value) {
-  if (!value) return [];
-  let items;
-  try {
-    items = JSON.parse(value);
-  } catch {
-    const err = new Error('Receipt items data is not valid JSON');
-    err.statusCode = 400;
-    throw err;
-  }
-  if (!Array.isArray(items)) {
-    const err = new Error('Receipt items data must be a list');
-    err.statusCode = 400;
-    throw err;
-  }
-  if (items.length > 250) {
-    const err = new Error('A receipt cannot contain more than 250 line items');
-    err.statusCode = 400;
-    throw err;
-  }
-  return items;
-}
-
-module.exports = ({ requireAdmin, requireUploader }) => {
+module.exports = ({ requireAdmin }) => {
   const router = express.Router();
 
   router.get('/', requireAdmin, async (req, res) => {
@@ -183,101 +158,6 @@ module.exports = ({ requireAdmin, requireUploader }) => {
     } catch (err) {
       console.error(err);
       return res.status(500).send('Failed to export receipts');
-    }
-  });
-
-  router.post('/', requireUploader, receiveReceiptFile, async (req, res) => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (!req.file && !req.session.isAdmin) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'A receipt image or PDF is required' });
-      }
-
-      const data = {
-        receipt_number: cleanText(req.body.receipt_number),
-        receipt_date: cleanText(req.body.receipt_date),
-        worker_id: cleanInt(req.body.worker_id),
-        store: cleanText(req.body.store),
-        project_id: cleanInt(req.body.project_id),
-        category_id: cleanInt(req.body.category_id),
-        subtotal: cleanNumber(req.body.subtotal),
-        tax: cleanNumber(req.body.tax),
-        total: cleanNumber(req.body.total),
-        note: cleanText(req.body.note),
-        ai_confidence: cleanNumber(req.body.ai_confidence),
-        payment_method: cleanText(req.body.payment_method)
-      };
-
-      if (!isIsoDate(data.receipt_date)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Receipt date must use YYYY-MM-DD format' });
-      }
-      const items = parseItems(req.body.items_json);
-      const snapshot = await loadSnapshots(client, data.worker_id, data.project_id, data.category_id);
-      const missingInfo = calculateMissingInfo(data, snapshot);
-
-      const receiptResult = await client.query(`
-        INSERT INTO receipts (
-          receipt_number, receipt_date, worker_id, worker_name, store,
-          project_id, project_name, category_id, category_name,
-          category_group, category_type, accounting_type,
-          account_id, account_code, account_name,
-          subtotal, tax, total, payment_method, follow_up, note,
-          source_file_name, source_mime_type, ai_confidence, missing_info
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NULL,$20,$21,$22,$23,$24)
-        RETURNING *
-      `, [
-        data.receipt_number, data.receipt_date || null, data.worker_id, snapshot.worker_name, data.store,
-        data.project_id, snapshot.project_name, data.category_id, snapshot.category_name,
-        snapshot.category_group, snapshot.category_type, snapshot.accounting_type,
-        snapshot.account_id, snapshot.account_code, snapshot.account_name,
-        data.subtotal, data.tax, data.total, data.payment_method, data.note,
-        req.file?.originalname || null, req.file?.mimetype || null, data.ai_confidence, missingInfo
-      ]);
-
-      const receipt = receiptResult.rows[0];
-      if (req.file) {
-        const storedFile = await optimizeReceiptFile(req.file);
-        await client.query(`
-          INSERT INTO receipt_files (receipt_id, filename, mime_type, size_bytes, file_data)
-          VALUES ($1,$2,$3,$4,$5)
-          ON CONFLICT (receipt_id) DO UPDATE SET
-            filename = EXCLUDED.filename,
-            mime_type = EXCLUDED.mime_type,
-            size_bytes = EXCLUDED.size_bytes,
-            file_data = EXCLUDED.file_data
-        `, [receipt.id, safeFilename(storedFile.originalname), storedFile.mimetype, storedFile.size, storedFile.buffer]);
-      }
-
-      for (const item of items) {
-        await client.query(`
-          INSERT INTO receipt_items (
-            receipt_id, receipt_number, receipt_date, store, worker_id, worker_name,
-            product_name, product_code, quantity, unit_price, item_total,
-            project_id, project_name, category_id, category_name,
-            category_group, category_type, accounting_type,
-            account_id, account_code, account_name
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-        `, [
-          receipt.id, receipt.receipt_number, receipt.receipt_date, receipt.store, receipt.worker_id, receipt.worker_name,
-          cleanText(item.product_name), cleanText(item.product_code), cleanNumber(item.quantity), cleanNumber(item.unit_price), cleanNumber(item.item_total),
-          receipt.project_id, receipt.project_name, receipt.category_id, receipt.category_name,
-          receipt.category_group, receipt.category_type, receipt.accounting_type,
-          receipt.account_id, receipt.account_code, receipt.account_name
-        ]);
-      }
-
-      await client.query('COMMIT');
-      return res.status(201).json({ ok: true, receipt });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Failed to create receipt' });
-    } finally {
-      client.release();
     }
   });
 

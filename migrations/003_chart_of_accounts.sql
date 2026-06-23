@@ -1,3 +1,5 @@
+-- UPGRADE-ONLY. Folded into 001_fnebooks_schema.sql; do not run on a fresh
+-- install. See migrations/README.md.
 -- FNEBooks v1.2 Chart of Accounts and account-code rules upgrade.
 -- Run after migration 001/002 when upgrading an existing v1.1 database.
 

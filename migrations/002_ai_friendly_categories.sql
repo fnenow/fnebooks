@@ -1,3 +1,5 @@
+-- UPGRADE-ONLY. Folded into 001_fnebooks_schema.sql; do not run on a fresh
+-- install. See migrations/README.md.
 -- Upgrade an earlier FNEBooks starter database to the AI-friendly category structure.
 -- Safe to run more than once.
 
