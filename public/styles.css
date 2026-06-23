@@ -30,6 +30,13 @@ th { background: #f1f3f4; position: sticky; top: 0; z-index: 1; }
 .success { background: #e6f4ea; }
 .scroll { overflow: auto; max-height: 70vh; }
 .inline-select { min-width: 110px; }
+.inline-input { min-width: 120px; padding: 6px; font-size: 12px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 14px; }
+.kpi .label { font-size: 12px; color: #5f6368; }
+.kpi .value { font-size: 22px; font-weight: bold; margin-top: 4px; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.section-row td { background: #f1f3f4; font-weight: bold; }
 .flag { display: inline-block; border-radius: 10px; padding: 2px 7px; margin: 1px 2px 1px 0; background: #f1f3f4; font-size: 11px; }
 .flag.warning { background: #fef7e0; }
 .flag.good { background: #e6f4ea; }

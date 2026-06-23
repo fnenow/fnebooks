@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Balance Sheet - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Balance Sheet &amp; Spending</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/balance_sheet.html">Balance Sheet</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/payment_methods.html">Payment Methods</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="notice">Figures are calculated from active receipts. Deactivating, deleting, recategorizing, or changing the payment method of a receipt updates these totals immediately.</div>
+  <div class="card">
+    <form id="filterForm">
+      <div class="grid compact">
+        <div><label>Start Date</label><input type="date" name="start_date"></div>
+        <div><label>End Date</label><input type="date" name="end_date"></div>
+        <div><label>Worker</label><select name="worker_id" id="workerFilter"><option value="">All</option></select></div>
+        <div><label>Project</label><select name="project_id" id="projectFilter"><option value="">All</option></select></div>
+      </div>
+      <br>
+      <div class="grid compact">
+        <button>Apply Filter</button>
+        <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card scroll">
+    <h2>Balance Sheet by Section</h2>
+    <table id="sectionTable"></table>
+  </div>
+
+  <div class="card scroll">
+    <h2>By Account</h2>
+    <table id="accountTable"></table>
+  </div>
+
+  <div class="card scroll">
+    <h2>By Payment Method</h2>
+    <table id="paymentTable"></table>
+  </div>
+
+  <div class="card scroll">
+    <h2>By Month</h2>
+    <table id="monthTable"></table>
+  </div>
+</main>
+<script src="/common.js"></script>
+<script>
+const filterForm = document.getElementById('filterForm');
+
+async function loadLookups() {
+  const [workers, projects] = await Promise.all([api('/api/lookups/workers'), api('/api/lookups/projects')]);
+  document.getElementById('workerFilter').innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
+  document.getElementById('projectFilter').innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
+}
+
+function currentParams() { return formParams(filterForm); }
+
+function renderKpis(s) {
+  document.getElementById('kpis').innerHTML = [
+    ['Spending (Expenses)', s.spending],
+    ['Assets', s.assets],
+    ['Liabilities', s.liabilities],
+    ['Equity', s.equity],
+    ['Income', s.income],
+    ['Total Recorded', s.recorded_total]
+  ].map(([label, value]) => `<div class="kpi"><div class="label">${label}</div><div class="value">${money(value)}</div></div>`).join('');
+}
+
+async function loadBalanceSheet() {
+  const data = await api('/api/balance-sheet?' + currentParams().toString());
+  renderKpis(data.summary);
+
+  document.getElementById('sectionTable').innerHTML =
+    `<tr><th>Section</th><th class="num">Receipts</th><th class="num">Tax</th><th class="num">Amount</th></tr>` +
+    data.sections.map(row => `<tr class="section-row"><td>${escapeHtml(row.balance_section)}</td><td class="num">${row.receipt_count}</td><td class="num">${money(row.total_tax)}</td><td class="num">${money(row.total_amount)}</td></tr>`).join('') +
+    (data.sections.length ? '' : '<tr><td colspan="4" class="muted">No receipts match this filter.</td></tr>');
+
+  document.getElementById('accountTable').innerHTML =
+    `<tr><th>Section</th><th>Accounting Type</th><th>Account</th><th class="num">Receipts</th><th class="num">Amount</th></tr>` +
+    data.by_account.map(row => `<tr><td>${escapeHtml(row.balance_section)}</td><td>${escapeHtml(row.accounting_type)}</td><td><span class="code">${escapeHtml(row.account_code)}</span> ${escapeHtml(row.account_name)}</td><td class="num">${row.receipt_count}</td><td class="num">${money(row.total_amount)}</td></tr>`).join('');
+
+  document.getElementById('paymentTable').innerHTML =
+    `<tr><th>Payment Method</th><th class="num">Receipts</th><th class="num">Amount</th></tr>` +
+    data.by_payment_method.map(row => `<tr><td>${escapeHtml(row.payment_method)}</td><td class="num">${row.receipt_count}</td><td class="num">${money(row.total_amount)}</td></tr>`).join('');
+
+  document.getElementById('monthTable').innerHTML =
+    `<tr><th>Month</th><th class="num">Spending</th><th class="num">Total Recorded</th></tr>` +
+    data.by_month.map(row => `<tr><td>${escapeHtml(row.month)}</td><td class="num">${money(row.spending)}</td><td class="num">${money(row.total_amount)}</td></tr>`).join('');
+}
+
+function clearFilters() { filterForm.reset(); loadBalanceSheet().catch(err => showPageMessage(err.message, 'error')); }
+filterForm.addEventListener('submit', event => { event.preventDefault(); loadBalanceSheet().catch(err => showPageMessage(err.message, 'error')); });
+(async function init(){ await ensureAdmin(); await loadLookups(); await loadBalanceSheet(); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>

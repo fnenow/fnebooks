@@ -5,6 +5,7 @@ const {
   cleanNumber,
   cleanInt,
   isIsoDate,
+  toIsoDate,
   sendCsv,
   requireGroupBy,
   safeFilename
@@ -23,12 +24,18 @@ const RECEIPT_GROUPS = {
 };
 
 function buildReceiptWhere(query) {
-  const where = ['active = TRUE'];
+  // Default to active receipts; allow viewing deactivated ones for reactivation.
+  const status = query.status === 'inactive' ? 'inactive' : query.status === 'all' ? 'all' : 'active';
+  const where = [];
+  if (status === 'active') where.push('active = TRUE');
+  else if (status === 'inactive') where.push('active = FALSE');
   const params = [];
   const add = (clause, value) => {
     params.push(value);
     where.push(clause.replace('?', `$${params.length}`));
   };
+
+  if (where.length === 0) where.push('1 = 1');
 
   if (query.start_date) add('receipt_date >= ?', query.start_date);
   if (query.end_date) add('receipt_date <= ?', query.end_date);
@@ -163,10 +170,22 @@ module.exports = ({ requireAdmin }) => {
 
   router.get('/:id/file', requireAdmin, async (req, res) => {
     try {
-      const result = await pool.query(
+      let result = await pool.query(
         'SELECT filename, mime_type, file_data FROM receipt_files WHERE receipt_id = $1',
         [req.params.id]
       );
+      // Several receipts from one uploaded file share a single stored file.
+      // Fall back to a sibling receipt with the same upload_id.
+      if (!result.rows.length) {
+        result = await pool.query(`
+          SELECT f.filename, f.mime_type, f.file_data
+          FROM receipts r
+          JOIN receipts sibling ON sibling.upload_id = r.upload_id
+          JOIN receipt_files f ON f.receipt_id = sibling.id
+          WHERE r.id = $1 AND r.upload_id IS NOT NULL
+          LIMIT 1
+        `, [req.params.id]);
+      }
       if (!result.rows.length) return res.status(404).send('File not found');
       const file = result.rows[0];
       res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
@@ -203,7 +222,7 @@ module.exports = ({ requireAdmin }) => {
       const current = currentResult.rows[0];
       const next = {
         receipt_number: req.body.receipt_number !== undefined ? cleanText(req.body.receipt_number) : current.receipt_number,
-        receipt_date: req.body.receipt_date !== undefined ? cleanText(req.body.receipt_date) : current.receipt_date,
+        receipt_date: req.body.receipt_date !== undefined ? cleanText(req.body.receipt_date) : toIsoDate(current.receipt_date),
         worker_id: req.body.worker_id !== undefined ? cleanInt(req.body.worker_id) : current.worker_id,
         store: req.body.store !== undefined ? cleanText(req.body.store) : current.store,
         project_id: req.body.project_id !== undefined ? cleanInt(req.body.project_id) : current.project_id,
@@ -308,6 +327,39 @@ module.exports = ({ requireAdmin }) => {
       client.release();
     }
   });
+
+  // Soft deactivate / reactivate. Deactivating a receipt removes it from the
+  // balance sheet and spending totals, and deactivates its line items too.
+  async function setReceiptActive(req, res, active) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query('SELECT id FROM receipts WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (!current.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Receipt not found' });
+      }
+      const result = await client.query(
+        'UPDATE receipts SET active = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+        [active, req.params.id]
+      );
+      await client.query(
+        'UPDATE receipt_items SET active = $1, updated_at = NOW() WHERE receipt_id = $2',
+        [active, req.params.id]
+      );
+      await client.query('COMMIT');
+      return res.json({ ok: true, active, receipt: result.rows[0] });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(err);
+      return res.status(500).json({ error: `Failed to ${active ? 'reactivate' : 'deactivate'} receipt` });
+    } finally {
+      client.release();
+    }
+  }
+
+  router.post('/:id/deactivate', requireAdmin, (req, res) => setReceiptActive(req, res, false));
+  router.post('/:id/reactivate', requireAdmin, (req, res) => setReceiptActive(req, res, true));
 
   router.delete('/:id', requireAdmin, async (req, res) => {
     const client = await pool.connect();

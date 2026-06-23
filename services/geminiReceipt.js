@@ -11,7 +11,7 @@ function stripCodeFence(value) {
 }
 
 function normalizeReceiptData(data) {
-  const receipt = data && typeof data === 'object' ? data : {};
+  const receipt = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   return {
     receipt_date: receipt.receipt_date || null,
     store: receipt.store || null,
@@ -29,6 +29,18 @@ function normalizeReceiptData(data) {
   };
 }
 
+// A file (especially a multi-page PDF) can contain more than one receipt.
+// Accept a single object, a bare array, or an object wrapping a receipts array,
+// and always return a list of receipt objects to normalize.
+function toReceiptList(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === 'object') {
+    if (Array.isArray(parsed.receipts)) return parsed.receipts;
+    return [parsed];
+  }
+  return [];
+}
+
 function categoryPrompt(categories) {
   if (!Array.isArray(categories) || !categories.length) return 'No category list was provided. Use category_id null.';
   const compact = categories.slice(0, 120).map(row => ({
@@ -41,15 +53,18 @@ function categoryPrompt(categories) {
   return JSON.stringify(compact);
 }
 
-async function extractReceiptWithGemini(file, categories = []) {
+async function extractReceiptsWithGemini(file, categories = []) {
   if (!hasGeminiConfig()) return null;
 
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
   const prompt = `
 Extract construction bookkeeping receipt data from the attached file.
+The file may contain more than one receipt (for example a multi-page PDF or a
+scan of several receipts). Return one object per distinct receipt.
 Return valid JSON only. Do not use markdown.
 
-Use this exact JSON shape:
+Return a JSON array of receipt objects, even when there is only one receipt.
+Each receipt object uses this exact shape:
 {
   "receipt_date": "YYYY-MM-DD or null",
   "store": "store name or null",
@@ -138,15 +153,29 @@ Category rule:
     throw new Error(`Gemini receipt JSON could not be parsed: ${text.slice(0, 200)}`);
   }
 
+  const receipts = toReceiptList(receiptJson).slice(0, 50).map(normalizeReceiptData);
   return {
     provider: 'gemini',
     model,
-    data: normalizeReceiptData(receiptJson),
+    receipts,
     raw: receiptJson
   };
 }
 
+// Backwards-compatible single-receipt helper.
+async function extractReceiptWithGemini(file, categories = []) {
+  const result = await extractReceiptsWithGemini(file, categories);
+  if (!result) return null;
+  return {
+    provider: result.provider,
+    model: result.model,
+    data: result.receipts[0] || normalizeReceiptData({}),
+    raw: result.raw
+  };
+}
+
 module.exports = {
+  extractReceiptsWithGemini,
   extractReceiptWithGemini,
   hasGeminiConfig
 };

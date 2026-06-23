@@ -13,6 +13,8 @@ const receiptRoutes = require('./routes/receipts');
 const receiptProcessingRoutes = require('./routes/receiptProcessing');
 const receiptItemRoutes = require('./routes/receiptItems');
 const settingsRoutes = require('./routes/settings');
+const paymentMethodRoutes = require('./routes/paymentMethods');
+const balanceSheetRoutes = require('./routes/balanceSheet');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -108,7 +110,7 @@ function clearLoginFailures(type, req) {
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ ok: true, app: 'FNEBooks', version: '1.2.2', database: 'connected' });
+    res.json({ ok: true, app: 'FNEBooks', version: '1.3.0', database: 'connected' });
   } catch (err) {
     console.error(err);
     res.status(503).json({ ok: false, app: 'FNEBooks', database: 'unavailable' });
@@ -166,6 +168,8 @@ app.use('/api/receipts', receiptProcessingRoutes({ requireUploader }));
 app.use('/api/receipts', receiptRoutes({ requireAdmin }));
 app.use('/api/receipt-items', requireAdmin, receiptItemRoutes);
 app.use('/api/settings', requireAdmin, settingsRoutes);
+app.use('/api/payment-methods', requireAdmin, paymentMethodRoutes);
+app.use('/api/balance-sheet', requireAdmin, balanceSheetRoutes);
 
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true,
@@ -182,5 +186,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`FNEBooks v1.2.2 running on port ${PORT}`);
+  console.log(`FNEBooks v1.3.0 running on port ${PORT}`);
 });

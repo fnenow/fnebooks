@@ -4,7 +4,15 @@ FNEBooks is a Node.js, Express, and PostgreSQL bookkeeping receipt app designed 
 
 ## Included
 
-- Worker receipt image/PDF upload
+- Worker receipt image/PDF upload, including many JPGs at once and PDFs that
+  contain several receipts (one receipt record is created per detected receipt)
+- Spending and accounting balance-sheet reports, broken down by section,
+  account, payment method, and month (Balance Sheet page)
+- Managed payment methods (add / rename / deactivate / delete) with a picker on
+  the upload and receipt-edit forms and inline payment-method change on the
+  receipts list
+- Receipt soft deactivation that also deactivates the receipt's line items, so
+  spending and balance-sheet totals stay correct
 - Temporary protected worker upload login
 - Admin login stored in PostgreSQL sessions
 - Receipts admin page with filters, Group By, CSV export, full correction form, Follow Up, file viewing, and soft deactivation
@@ -77,7 +85,14 @@ Run only:
 psql "$DATABASE_URL" -f migrations/001_fnebooks_schema.sql
 ```
 
-The fresh migration creates the FNEBooks tables, category master, Chart of Accounts, account-code rules, and settings. It creates fallback `workers` and `projects` tables only when those FNEClock tables do not already exist.
+Then run the receipt-processing and reporting additions:
+
+```bash
+psql "$DATABASE_URL" -f migrations/006_receipt_processing_updates.sql
+psql "$DATABASE_URL" -f migrations/007_spending_balance_payment_methods.sql
+```
+
+The fresh migration creates the FNEBooks tables, category master, Chart of Accounts, account-code rules, and settings. It creates fallback `workers` and `projects` tables only when those FNEClock tables do not already exist. Migration 007 adds the managed payment methods, receipt-item deactivation, and the balance-sheet view.
 
 ### Upgrade from the original v1.0 starter
 
@@ -108,8 +123,10 @@ Pages:
 - `/login.html` — admin login
 - `/receipts.html` — receipt administration
 - `/receipt_items.html` — receipt-item administration
+- `/balance_sheet.html` — spending and accounting balance sheet
 - `/categories.html` — category administration
 - `/accounts.html` — Chart of Accounts and code rules
+- `/payment_methods.html` — manage payment methods
 - `/settings.html` — settings
 - `/health` — app and database health check
 
@@ -135,8 +152,9 @@ npm start
 
 ## Current limits
 
-- AI receipt reading and payment-method extraction are not connected.
-- One receipt file is processed per submission; AI batch upload is not yet implemented.
+- AI receipt reading and payment-method extraction require a `GEMINI_API_KEY`.
+  Without it, uploads are still saved and each file becomes one receipt entered
+  from the form fields.
 - FNEClock worker authentication is not connected yet.
 - Income categories and accounts exist, but the income transaction page/table is not built.
 - Receipt files are stored in PostgreSQL for the first version; object storage should be considered as volume grows.
@@ -159,3 +177,25 @@ psql "$DATABASE_URL" -f migrations/004_session_table_fix.sql
 ```
 
 This avoids conflicts with another app using a generic `session` table in the shared PostgreSQL database.
+
+## v1.3.0 batch upload, balance sheet, and payment methods
+
+Run `migrations/007_spending_balance_payment_methods.sql` after upgrading.
+
+- Upload many JPGs in one submission, and upload a PDF that contains several
+  receipts. Each detected receipt becomes its own receipt record. This also
+  fixes the `invalid input syntax for type json` error that happened when the
+  AI returned more than one receipt for a file (a top-level JSON array was being
+  stored into a JSONB column as a Postgres array literal).
+- New Balance Sheet page with spending and accounting totals by section,
+  account, payment method, and month. Totals are computed from active receipts,
+  so recording, editing, deactivating, deleting, or changing a payment method
+  updates them immediately.
+- Manage payment methods (add, rename, deactivate, delete). Renaming keeps
+  existing receipts in sync. The upload and edit forms use the managed list, and
+  the payment method can be changed inline on the receipts list.
+- Deactivating a receipt now also deactivates its line items, and deactivated
+  receipts/items are excluded from reports until reactivated.
+- Fixed a date-handling bug where editing a receipt without changing its date
+  (for example the inline Follow Up or payment-method change) could fail format
+  validation because PostgreSQL returns dates as objects.

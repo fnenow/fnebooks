@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Methods - FNEBooks</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Payment Methods</h1>
+  <nav>
+    <a href="/upload_receipt.html">Upload</a>
+    <a href="/receipts.html">Receipts</a>
+    <a href="/receipt_items.html">Receipt Items</a>
+    <a href="/balance_sheet.html">Balance Sheet</a>
+    <a href="/categories.html">Categories</a>
+    <a href="/accounts.html">Accounts</a>
+    <a href="/payment_methods.html">Payment Methods</a>
+    <a href="/settings.html">Settings</a>
+    <button onclick="logout()">Logout</button>
+  </nav>
+</header>
+<main>
+  <div id="message"></div>
+  <div class="card">
+    <h2>Add Payment Method</h2>
+    <form id="addForm">
+      <div class="grid">
+        <div><label>Name</label><input name="name" placeholder="cash, check, Visa 1234, Bank of America" required></div>
+        <div><label>Kind</label><select name="kind"><option value="cash">cash</option><option value="check">check</option><option value="card">card</option><option value="bank">bank</option><option value="other" selected>other</option></select></div>
+        <div><label>Card Last 4</label><input name="last4" inputmode="numeric" placeholder="1234" maxlength="4"></div>
+        <div><label>Sort Order</label><input type="number" name="sort_order" value="100"></div>
+        <div style="align-self:end"><button>Add Payment Method</button></div>
+      </div>
+      <label>Note</label><input name="note" placeholder="Optional description">
+    </form>
+    <p class="small">Receipts store the payment method by name. Renaming a method updates the receipts that use it so the balance sheet stays correct. A method that is already used by receipts can be deactivated but not deleted.</p>
+  </div>
+
+  <div class="card">
+    <label><input type="checkbox" id="showAll" style="width:auto"> Show deactivated methods</label>
+  </div>
+
+  <div class="card scroll"><table id="table"></table></div>
+</main>
+<script src="/common.js"></script>
+<script>
+const table = document.getElementById('table');
+const addForm = document.getElementById('addForm');
+const showAll = document.getElementById('showAll');
+const KINDS = ['cash', 'check', 'card', 'bank', 'other'];
+
+function kindOptions(selected) {
+  return KINDS.map(k => `<option value="${k}" ${k === selected ? 'selected' : ''}>${k}</option>`).join('');
+}
+
+async function loadMethods() {
+  const rows = await api('/api/payment-methods?status=' + (showAll.checked ? 'all' : 'active'));
+  table.innerHTML = `<tr><th>Name</th><th>Kind</th><th>Last 4</th><th>Note</th><th>Sort</th><th>Receipts</th><th>Active</th><th>Action</th></tr>` +
+    rows.map(row => `<tr>
+      <td><input id="name-${row.id}" value="${escapeHtml(row.name)}"></td>
+      <td><select id="kind-${row.id}">${kindOptions(row.kind)}</select></td>
+      <td><input id="last4-${row.id}" value="${escapeHtml(row.last4 || '')}" maxlength="4" style="width:5rem"></td>
+      <td><input id="note-${row.id}" value="${escapeHtml(row.note || '')}"></td>
+      <td><input id="sort-${row.id}" type="number" value="${row.sort_order}" style="width:5rem"></td>
+      <td class="num">${row.receipt_count}</td>
+      <td><input type="checkbox" id="active-${row.id}" ${row.active ? 'checked' : ''} style="width:auto"></td>
+      <td class="row-actions">
+        <button class="small-button" onclick="saveMethod(${row.id})">Save</button>
+        <button class="small-button danger" onclick="deleteMethod(${row.id}, ${row.receipt_count})">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+addForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(event.target));
+    await api('/api/payment-methods', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    addForm.reset();
+    showPageMessage('Payment method added.');
+    await loadMethods();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+});
+
+async function saveMethod(id) {
+  try {
+    await api('/api/payment-methods/' + id, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: document.getElementById('name-' + id).value,
+        kind: document.getElementById('kind-' + id).value,
+        last4: document.getElementById('last4-' + id).value,
+        note: document.getElementById('note-' + id).value,
+        sort_order: document.getElementById('sort-' + id).value,
+        active: document.getElementById('active-' + id).checked
+      })
+    });
+    showPageMessage('Payment method saved.');
+    await loadMethods();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+
+async function deleteMethod(id, used) {
+  if (used > 0) return showPageMessage('This method is used by receipts. Uncheck Active and Save to deactivate it instead.', 'error');
+  if (!confirm('Delete this payment method?')) return;
+  try {
+    await api('/api/payment-methods/' + id, { method: 'DELETE' });
+    showPageMessage('Payment method deleted.');
+    await loadMethods();
+  } catch (err) { showPageMessage(err.message, 'error'); }
+}
+
+showAll.addEventListener('change', () => loadMethods().catch(err => showPageMessage(err.message, 'error')));
+(async function init(){ await ensureAdmin(); await loadMethods(); })().catch(err => showPageMessage(err.message, 'error'));
+</script>
+</body>
+</html>

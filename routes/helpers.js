@@ -25,6 +25,19 @@ function isIsoDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value));
 }
 
+// pg returns DATE columns as JS Date objects. Normalize a stored value (Date,
+// ISO string, or 'YYYY-MM-DD') back to a 'YYYY-MM-DD' string, or null.
+function toIsoDate(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
 function csvEscape(value) {
   if (value === null || value === undefined) return '';
   let text = String(value);
@@ -70,6 +83,7 @@ module.exports = {
   cleanInt,
   isTrue,
   isIsoDate,
+  toIsoDate,
   sendCsv,
   requireGroupBy,
   safeFilename

@@ -112,6 +112,18 @@ router.post('/categories', async (req, res) => {
   }
 });
 
+router.get('/payment-methods', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, kind, last4 FROM payment_methods WHERE active = TRUE ORDER BY sort_order, LOWER(name)'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load payment methods' });
+  }
+});
+
 router.get('/accounts', async (req, res) => {
   try {
     const params = [];

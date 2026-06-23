@@ -14,6 +14,10 @@ Then run the receipt-processing additions:
 
 - `006_receipt_processing_updates.sql` — `receipt_uploads` table plus the
   AI / Google Drive columns on `receipts` and `receipt_items`.
+- `007_spending_balance_payment_methods.sql` — receipt-item soft deactivation
+  (`receipt_items.active`), the managed `payment_methods` table (seeded with
+  cash / check / unknown), and the `v_receipt_accounting` view that powers the
+  spending and balance-sheet reports.
 
 That is enough for a brand-new database.
 
