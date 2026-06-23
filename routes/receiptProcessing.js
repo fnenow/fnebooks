@@ -1,11 +1,10 @@
 const express = require('express');
-const multer = require('multer');
 const { pool } = require('../db');
 const { uploadReceiptToDrive, safeStoredFilename, hasDriveUploadConfig } = require('../services/appsScriptDrive');
 const { extractReceiptWithGemini, hasGeminiConfig } = require('../services/geminiReceipt');
 const { cleanText, cleanNumber, cleanInt, isIsoDate } = require('./helpers');
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
+const { receiveReceiptFile } = require('../middleware/receiptUpload');
+const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
 
 function firstText(...values) {
   for (const value of values) {
@@ -90,12 +89,13 @@ async function snapshot(client, workerId, projectId, categoryId) {
 module.exports = ({ requireUploader }) => {
   const router = express.Router();
 
-  router.post('/', requireUploader, upload.single('receipt_file'), async (req, res) => {
+  router.post('/', requireUploader, receiveReceiptFile, async (req, res) => {
     const client = await pool.connect();
     try {
       if (!req.file && !req.session.isAdmin) return res.status(400).json({ error: 'A receipt image or PDF is required' });
 
-      const file = req.file || null;
+      const originalFile = req.file || null;
+      const file = originalFile ? await optimizeReceiptFile(originalFile) : null;
       const drive = file && hasDriveUploadConfig() ? await uploadReceiptToDrive(file, safeStoredFilename(file.originalname)) : null;
       const categories = file && hasGeminiConfig() ? await loadCategories(client) : [];
       const ai = file && hasGeminiConfig() ? await extractReceiptWithGemini(file, categories) : null;
@@ -111,7 +111,7 @@ module.exports = ({ requireUploader }) => {
         subtotal: firstNumber(req.body.subtotal, aiData.subtotal),
         tax: firstNumber(req.body.tax, aiData.tax),
         total: firstNumber(req.body.total, aiData.total),
-        payment_method: cleanPaymentMethod(aiData.payment_method),
+        payment_method: firstText(req.body.payment_method, cleanPaymentMethod(aiData.payment_method)),
         note: firstText(req.body.note, aiData.note),
         ai_confidence: firstNumber(aiData.confidence)
       };
@@ -124,9 +124,9 @@ module.exports = ({ requireUploader }) => {
       let uploadId = null;
       if (file) {
         const u = await client.query(`
-          INSERT INTO receipt_uploads (worker_id, project_id, original_filename, stored_filename, mime_type, file_size, original_file_size, compressed_file_size, google_drive_file_id, google_drive_web_view_link, ai_provider, ai_model, ai_status, ai_confidence, ai_raw_json, processed_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW()) RETURNING id
-        `, [row.worker_id, row.project_id, file.originalname, drive?.storedFilename || file.originalname, file.mimetype, file.size, file.size, file.size, drive?.fileId || null, drive?.webViewLink || null, ai?.provider || null, ai?.model || null, ai ? 'processed' : 'uploaded', row.ai_confidence, ai?.raw || null]);
+          INSERT INTO receipt_uploads (worker_id, project_id, original_filename, stored_filename, mime_type, file_size, original_file_size, compressed_file_size, compression_quality, image_width, image_height, google_drive_file_id, google_drive_web_view_link, ai_provider, ai_model, ai_status, ai_confidence, ai_raw_json, processed_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW()) RETURNING id
+        `, [row.worker_id, row.project_id, file.originalname, drive?.storedFilename || file.originalname, file.mimetype, file.size, file.originalSize, file.compressedSize, file.compressionQuality, file.imageWidth, file.imageHeight, drive?.fileId || null, drive?.webViewLink || null, ai?.provider || null, ai?.model || null, ai ? 'processed' : 'uploaded', row.ai_confidence, ai?.raw || null]);
         uploadId = u.rows[0].id;
       }
 
