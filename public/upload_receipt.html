@@ -37,6 +37,7 @@
         <div><label>Subtotal</label><input type="number" step="0.01" name="subtotal" inputmode="decimal"></div>
         <div><label>Tax</label><input type="number" step="0.01" name="tax" inputmode="decimal"></div>
         <div><label>Total</label><input type="number" step="0.01" name="total" inputmode="decimal"></div>
+        <div><label>Payment Method</label><input name="payment_method" placeholder="cash, check, or last 4 digits" autocomplete="off"></div>
       </div>
       <br>
       <label>Note</label>
@@ -55,7 +56,7 @@
     <p class="small">Worker-added categories are placed under Review Required and receive a new system-generated account code. Admin should review them later.</p>
   </div>
 
-  <div class="notice">Payment method is reserved for AI extraction. For cards, only the last four digits will be stored. Follow Up is managed by admin.</div>
+  <div class="notice">Payment method can be entered manually or extracted by AI. For cards, store only the last four digits. Follow Up is managed by admin.</div>
 </main>
 <script src="/common.js"></script>
 <script>

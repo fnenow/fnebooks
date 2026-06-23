@@ -1,5 +1,4 @@
 const express = require('express');
-const multer = require('multer');
 const { pool } = require('../db');
 const {
   cleanText,
@@ -10,34 +9,8 @@ const {
   requireGroupBy,
   safeFilename
 } = require('./helpers');
-
-const allowedMimeTypes = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-  'application/pdf'
-]);
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
-  fileFilter: (req, file, cb) => {
-    if (allowedMimeTypes.has(file.mimetype)) return cb(null, true);
-    const err = new Error('Receipt file must be JPG, PNG, WebP, HEIC, or PDF');
-    err.statusCode = 400;
-    return cb(err);
-  }
-});
-
-function receiveReceiptFile(req, res, next) {
-  upload.single('receipt_file')(req, res, err => {
-    if (!err) return next();
-    if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Receipt file must be 15 MB or smaller' });
-    return res.status(err.statusCode || 400).json({ error: err.message || 'Invalid receipt file' });
-  });
-}
+const { receiveReceiptFile } = require('../middleware/receiptUpload');
+const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
 
 const RECEIPT_GROUPS = {
   project: { sql: "COALESCE(project_name, 'Missing Project')" },
@@ -233,7 +206,8 @@ module.exports = ({ requireAdmin, requireUploader }) => {
         tax: cleanNumber(req.body.tax),
         total: cleanNumber(req.body.total),
         note: cleanText(req.body.note),
-        ai_confidence: cleanNumber(req.body.ai_confidence)
+        ai_confidence: cleanNumber(req.body.ai_confidence),
+        payment_method: cleanText(req.body.payment_method)
       };
 
       if (!isIsoDate(data.receipt_date)) {
@@ -253,19 +227,20 @@ module.exports = ({ requireAdmin, requireUploader }) => {
           subtotal, tax, total, payment_method, follow_up, note,
           source_file_name, source_mime_type, ai_confidence, missing_info
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NULL,NULL,$19,$20,$21,$22,$23)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NULL,$20,$21,$22,$23,$24)
         RETURNING *
       `, [
         data.receipt_number, data.receipt_date || null, data.worker_id, snapshot.worker_name, data.store,
         data.project_id, snapshot.project_name, data.category_id, snapshot.category_name,
         snapshot.category_group, snapshot.category_type, snapshot.accounting_type,
         snapshot.account_id, snapshot.account_code, snapshot.account_name,
-        data.subtotal, data.tax, data.total, data.note,
+        data.subtotal, data.tax, data.total, data.payment_method, data.note,
         req.file?.originalname || null, req.file?.mimetype || null, data.ai_confidence, missingInfo
       ]);
 
       const receipt = receiptResult.rows[0];
       if (req.file) {
+        const storedFile = await optimizeReceiptFile(req.file);
         await client.query(`
           INSERT INTO receipt_files (receipt_id, filename, mime_type, size_bytes, file_data)
           VALUES ($1,$2,$3,$4,$5)
@@ -274,7 +249,7 @@ module.exports = ({ requireAdmin, requireUploader }) => {
             mime_type = EXCLUDED.mime_type,
             size_bytes = EXCLUDED.size_bytes,
             file_data = EXCLUDED.file_data
-        `, [receipt.id, safeFilename(req.file.originalname), req.file.mimetype, req.file.size, req.file.buffer]);
+        `, [receipt.id, safeFilename(storedFile.originalname), storedFile.mimetype, storedFile.size, storedFile.buffer]);
       }
 
       for (const item of items) {
@@ -357,6 +332,7 @@ module.exports = ({ requireAdmin, requireUploader }) => {
         tax: req.body.tax !== undefined ? cleanNumber(req.body.tax) : current.tax,
         total: req.body.total !== undefined ? cleanNumber(req.body.total) : current.total,
         follow_up: req.body.follow_up !== undefined ? cleanText(req.body.follow_up) : current.follow_up,
+        payment_method: req.body.payment_method !== undefined ? cleanText(req.body.payment_method) : current.payment_method,
         note: req.body.note !== undefined ? cleanText(req.body.note) : current.note,
         correction_note: req.body.correction_note !== undefined ? cleanText(req.body.correction_note) : current.correction_note
       };
@@ -393,12 +369,13 @@ module.exports = ({ requireAdmin, requireUploader }) => {
           tax = $17,
           total = $18,
           follow_up = $19,
-          note = $20,
+          payment_method = $20,
+          note = $21,
           corrected = TRUE,
-          correction_note = $21,
-          missing_info = $22,
+          correction_note = $22,
+          missing_info = $23,
           updated_at = NOW()
-        WHERE id = $23
+        WHERE id = $24
         RETURNING *
       `, [
         next.receipt_number, next.receipt_date || null,
@@ -407,7 +384,7 @@ module.exports = ({ requireAdmin, requireUploader }) => {
         next.category_id, snapshot.category_name, snapshot.category_group,
         snapshot.category_type, snapshot.accounting_type,
         snapshot.account_id, snapshot.account_code, snapshot.account_name,
-        next.subtotal, next.tax, next.total, next.follow_up, next.note,
+        next.subtotal, next.tax, next.total, next.follow_up, next.payment_method, next.note,
         next.correction_note, missingInfo, req.params.id
       ]);
 
@@ -453,16 +430,32 @@ module.exports = ({ requireAdmin, requireUploader }) => {
   });
 
   router.delete('/:id', requireAdmin, async (req, res) => {
+    const client = await pool.connect();
     try {
-      const result = await pool.query(
-        'UPDATE receipts SET active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id',
-        [req.params.id]
-      );
-      if (!result.rows.length) return res.status(404).json({ error: 'Receipt not found' });
-      return res.json({ ok: true });
+      await client.query('BEGIN');
+      const current = await client.query('SELECT id, upload_id FROM receipts WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (!current.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Receipt not found' });
+      }
+
+      await client.query('DELETE FROM receipts WHERE id = $1', [req.params.id]);
+      if (current.rows[0].upload_id) {
+        await client.query(
+          `UPDATE receipt_uploads
+           SET receipt_id = NULL, ai_status = 'db_failed', error_message = 'Receipt deleted by admin'
+           WHERE id = $1`,
+          [current.rows[0].upload_id]
+        );
+      }
+      await client.query('COMMIT');
+      return res.json({ ok: true, deleted: true });
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error(err);
-      return res.status(500).json({ error: 'Failed to deactivate receipt' });
+      return res.status(500).json({ error: 'Failed to delete receipt' });
+    } finally {
+      client.release();
     }
   });
 

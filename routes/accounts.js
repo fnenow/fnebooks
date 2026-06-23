@@ -50,6 +50,35 @@ router.get('/', async (req, res) => {
   }
 });
 
+
+router.get('/balances', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT a.id,
+             a.account_code,
+             a.account_name,
+             a.transaction_kind,
+             a.accounting_type,
+             a.normal_balance,
+             COUNT(r.id)::int AS receipt_count,
+             COALESCE(SUM(r.total), 0)::numeric(12,2) AS receipt_total,
+             CASE
+               WHEN a.normal_balance = 'credit' THEN (COALESCE(SUM(r.total), 0) * -1)::numeric(12,2)
+               ELSE COALESCE(SUM(r.total), 0)::numeric(12,2)
+             END AS signed_balance
+      FROM chart_accounts a
+      LEFT JOIN receipts r ON r.account_id = a.id AND r.active = TRUE
+      WHERE a.active = TRUE
+      GROUP BY a.id
+      ORDER BY a.account_code
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load account balances' });
+  }
+});
+
 router.get('/rules', async (req, res) => {
   try {
     const result = await pool.query(`
