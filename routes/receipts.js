@@ -9,7 +9,7 @@ const {
   requireGroupBy,
   safeFilename
 } = require('./helpers');
-const { receiveReceiptFile, optimizeReceiptFile } = require('../middleware/receiptUpload');
+const { receiveReceiptFile, optimizeReceiptFile } = require('../middleware/receiptFiles');
 
 const RECEIPT_GROUPS = {
   project: { sql: "COALESCE(project_name, 'Missing Project')" },
