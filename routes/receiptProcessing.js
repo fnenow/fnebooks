@@ -3,8 +3,7 @@ const { pool } = require('../db');
 const { uploadReceiptToDrive, safeStoredFilename, hasDriveUploadConfig } = require('../services/appsScriptDrive');
 const { extractReceiptWithGemini, hasGeminiConfig } = require('../services/geminiReceipt');
 const { cleanText, cleanNumber, cleanInt, isIsoDate } = require('./helpers');
-const { receiveReceiptFile } = require('../middleware/receiptUpload');
-const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
+const { receiveReceiptFile, optimizeReceiptFile } = require('../middleware/receiptUpload');
 
 function firstText(...values) {
   for (const value of values) {

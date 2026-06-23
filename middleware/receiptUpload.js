@@ -9,6 +9,38 @@ const allowedMimeTypes = new Set([
   'application/pdf'
 ]);
 
+
+const imageMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif'
+]);
+
+function originalFileResult(file, optimizationSkipped) {
+  return {
+    ...file,
+    originalSize: file.size,
+    compressedSize: file.size,
+    compressionQuality: null,
+    imageWidth: null,
+    imageHeight: null,
+    optimized: false,
+    optimizationSkipped
+  };
+}
+
+async function optimizeReceiptFile(file) {
+  if (!file) return null;
+
+  if (!imageMimeTypes.has(file.mimetype)) {
+    return originalFileResult(file, 'unsupported_mime_type');
+  }
+
+  return originalFileResult(file, 'image_optimizer_not_available');
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024, files: 1 },
@@ -30,5 +62,7 @@ function receiveReceiptFile(req, res, next) {
 
 module.exports = {
   allowedMimeTypes,
+  imageMimeTypes,
+  optimizeReceiptFile,
   receiveReceiptFile
 };
