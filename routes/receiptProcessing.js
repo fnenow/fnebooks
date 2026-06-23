@@ -2,7 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { uploadReceiptToDrive, safeStoredFilename, hasDriveUploadConfig } = require('../services/appsScriptDrive');
 const { extractReceiptWithGemini, hasGeminiConfig } = require('../services/geminiReceipt');
-const { cleanText, cleanNumber, cleanInt, isIsoDate } = require('./helpers');
+const { cleanText, cleanNumber, cleanInt, isIsoDate, safeFilename } = require('./helpers');
 const { receiveReceiptFile } = require('../middleware/receiptUpload');
 const { optimizeReceiptFile } = require('../services/receiptFileOptimizer');
 
@@ -35,6 +35,23 @@ function cleanPaymentMethod(value) {
 
 function simpleItems(aiData) {
   return Array.isArray(aiData.items) ? aiData.items.slice(0, 250) : [];
+}
+
+function parseItemsJson(value) {
+  if (!value) return null;
+  let items;
+  try {
+    items = JSON.parse(value);
+  } catch {
+    throw Object.assign(new Error('Receipt items data is not valid JSON'), { statusCode: 400 });
+  }
+  if (!Array.isArray(items)) {
+    throw Object.assign(new Error('Receipt items data must be a list'), { statusCode: 400 });
+  }
+  if (items.length > 250) {
+    throw Object.assign(new Error('A receipt cannot contain more than 250 line items'), { statusCode: 400 });
+  }
+  return items;
 }
 
 async function loadCategories(client) {
@@ -94,6 +111,12 @@ module.exports = ({ requireUploader }) => {
     try {
       if (!req.file && !req.session.isAdmin) return res.status(400).json({ error: 'A receipt image or PDF is required' });
 
+      const manualItems = parseItemsJson(req.body.items_json);
+      const followUp = cleanText(req.body.follow_up);
+      if (followUp && !['reimburse', 'collect'].includes(followUp)) {
+        return res.status(400).json({ error: 'Follow Up must be reimburse or collect' });
+      }
+
       const originalFile = req.file || null;
       const file = originalFile ? await optimizeReceiptFile(originalFile) : null;
       const drive = file && hasDriveUploadConfig() ? await uploadReceiptToDrive(file, safeStoredFilename(file.originalname)) : null;
@@ -132,12 +155,24 @@ module.exports = ({ requireUploader }) => {
 
       const receiptResult = await client.query(`
         INSERT INTO receipts (receipt_number, receipt_date, worker_id, worker_name, store, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name, subtotal, tax, total, payment_method, follow_up, note, source_file_name, source_mime_type, ai_confidence, ai_provider, ai_model, ai_raw_json, google_drive_file_id, google_drive_web_view_link, upload_id, missing_info)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NULL,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30) RETURNING *
-      `, [row.receipt_number, row.receipt_date || null, row.worker_id, snap.worker_name, row.store, row.project_id, snap.project_name, row.category_id, snap.category_name, snap.category_group, snap.category_type, snap.accounting_type, snap.account_id, snap.account_code, snap.account_name, row.subtotal, row.tax, row.total, row.payment_method, row.note, file?.originalname || null, file?.mimetype || null, row.ai_confidence, ai?.provider || null, ai?.model || null, ai?.raw || null, drive?.fileId || null, drive?.webViewLink || null, uploadId, missingInfo]);
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING *
+      `, [row.receipt_number, row.receipt_date || null, row.worker_id, snap.worker_name, row.store, row.project_id, snap.project_name, row.category_id, snap.category_name, snap.category_group, snap.category_type, snap.accounting_type, snap.account_id, snap.account_code, snap.account_name, row.subtotal, row.tax, row.total, row.payment_method, followUp || null, row.note, file?.originalname || null, file?.mimetype || null, row.ai_confidence, ai?.provider || null, ai?.model || null, ai?.raw || null, drive?.fileId || null, drive?.webViewLink || null, uploadId, missingInfo]);
       const receipt = receiptResult.rows[0];
       if (uploadId) await client.query('UPDATE receipt_uploads SET receipt_id = $1 WHERE id = $2', [receipt.id, uploadId]);
 
-      for (const item of simpleItems(aiData)) {
+      if (file && !drive) {
+        await client.query(`
+          INSERT INTO receipt_files (receipt_id, filename, mime_type, size_bytes, file_data)
+          VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (receipt_id) DO UPDATE SET
+            filename = EXCLUDED.filename,
+            mime_type = EXCLUDED.mime_type,
+            size_bytes = EXCLUDED.size_bytes,
+            file_data = EXCLUDED.file_data
+        `, [receipt.id, safeFilename(file.originalname), file.mimetype, file.size, file.buffer]);
+      }
+
+      for (const item of manualItems || simpleItems(aiData)) {
         await client.query(`
           INSERT INTO receipt_items (receipt_id, upload_id, receipt_number, receipt_date, store, worker_id, worker_name, product_name, product_code, quantity, unit_price, item_total, project_id, project_name, category_id, category_name, category_group, category_type, accounting_type, account_id, account_code, account_name)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
@@ -155,7 +190,7 @@ module.exports = ({ requireUploader }) => {
     }
   });
 
-  router.get('/:id/file', async (req, res, next) => {
+  router.get('/:id/file', requireUploader, async (req, res, next) => {
     try {
       const result = await pool.query('SELECT google_drive_web_view_link FROM receipts WHERE id = $1', [req.params.id]);
       if (result.rows[0]?.google_drive_web_view_link) return res.redirect(result.rows[0].google_drive_web_view_link);
