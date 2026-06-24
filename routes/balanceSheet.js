@@ -55,8 +55,10 @@ router.get('/', async (req, res) => {
                COUNT(*)::int AS receipt_count,
                COALESCE(SUM(total), 0)::numeric(14,2) AS total_amount
         FROM v_receipt_accounting ${where}
-        GROUP BY balance_section, accounting_type, account_code, account_name
-        ORDER BY balance_section, account_code
+        GROUP BY balance_section, accounting_type,
+                 COALESCE(account_code, 'N/A'),
+                 COALESCE(account_name, category_name, 'Unclassified')
+        ORDER BY balance_section, COALESCE(account_code, 'N/A')
       `, params),
       pool.query(`
         SELECT payment_method,
