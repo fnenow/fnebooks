@@ -110,7 +110,7 @@ function clearLoginFailures(type, req) {
 app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
-    res.json({ ok: true, app: 'FNEBooks', version: '1.3.0', database: 'connected' });
+    res.json({ ok: true, app: 'FNEBooks', version: '1.3.1', database: 'connected' });
   } catch (err) {
     console.error(err);
     res.status(503).json({ ok: false, app: 'FNEBooks', database: 'unavailable' });
@@ -186,5 +186,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`FNEBooks v1.3.0 running on port ${PORT}`);
+  console.log(`FNEBooks v1.3.1 running on port ${PORT}`);
 });

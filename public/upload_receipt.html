@@ -21,8 +21,9 @@
       <div class="grid">
         <div>
           <label>Receipt Photos/PDF</label>
-          <input id="receiptFile" type="file" name="receipt_files" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" multiple>
+          <input id="receiptFile" type="file" name="receipt_files" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf" multiple onchange="updateFileCount()">
           <div class="small">JPG, PNG, WebP, HEIC, or PDF. Select several files to upload many receipts at once; a PDF may contain multiple receipts. Maximum 15 MB each.</div>
+          <div id="fileCount" class="small"></div>
         </div>
         <div><label>Receipt Date</label><input id="receiptDate" type="date" name="receipt_date"></div>
         <div><label>Receipt Number</label><input name="receipt_number" autocomplete="off"></div>
@@ -88,7 +89,7 @@ async function loadLookups(selectedCategory = '') {
     api('/api/lookups/workers'),
     api('/api/lookups/projects'),
     api('/api/lookups/categories?kind=expense'),
-    api('/api/lookups/payment-methods')
+    api('/api/lookups/payment-methods').catch(() => [])
   ]);
   categoryRows = categories;
   const currentWorker = workerSelect.value;
@@ -129,6 +130,14 @@ async function addWorkerCategory() {
 workerSelect.addEventListener('change', () => applyDefaults().catch(err => showPageMessage(err.message, 'error')));
 categorySelect.addEventListener('change', updateCategoryHelp);
 
+function updateFileCount() {
+  const files = document.getElementById('receiptFile').files;
+  const el = document.getElementById('fileCount');
+  if (!files || !files.length) { el.textContent = ''; return; }
+  const names = Array.from(files).map(f => f.name).join(', ');
+  el.textContent = `${files.length} file${files.length === 1 ? '' : 's'} selected: ${names}`;
+}
+
 receiptForm.addEventListener('submit', async event => {
   event.preventDefault();
   try {
@@ -139,6 +148,7 @@ receiptForm.addEventListener('submit', async event => {
     showPageMessage(`Saved ${count} receipt${count === 1 ? '' : 's'}.${needsReview ? ` ${needsReview} need admin review.` : ''}`);
     const workerId = workerSelect.value;
     event.target.reset();
+    updateFileCount();
     document.getElementById('receiptDate').valueAsDate = new Date();
     await loadLookups();
     if (workerId) {

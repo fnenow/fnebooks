@@ -36,6 +36,7 @@
       <div class="grid compact">
         <button>Apply Filter</button>
         <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
+        <button type="button" class="secondary" onclick="exportCsv()">Export to Excel (CSV)</button>
       </div>
     </form>
   </div>
@@ -107,6 +108,7 @@ async function loadBalanceSheet() {
     data.by_month.map(row => `<tr><td>${escapeHtml(row.month)}</td><td class="num">${money(row.spending)}</td><td class="num">${money(row.total_amount)}</td></tr>`).join('');
 }
 
+function exportCsv() { window.location.href = '/api/balance-sheet/export.csv?' + currentParams().toString(); }
 function clearFilters() { filterForm.reset(); loadBalanceSheet().catch(err => showPageMessage(err.message, 'error')); }
 filterForm.addEventListener('submit', event => { event.preventDefault(); loadBalanceSheet().catch(err => showPageMessage(err.message, 'error')); });
 (async function init(){ await ensureAdmin(); await loadLookups(); await loadBalanceSheet(); })().catch(err => showPageMessage(err.message, 'error'));
