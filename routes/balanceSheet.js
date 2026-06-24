@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const { sendCsv } = require('./helpers');
 
 const router = express.Router();
 
@@ -18,6 +19,16 @@ function buildWhere(query) {
   if (query.worker_id) add('worker_id = ?', query.worker_id);
   if (query.project_id) add('project_id = ?', query.project_id);
   return { where: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
+// Turn a database error into a clear message. The most common cause of a
+// balance-sheet failure is migration 007 not having been run, so the
+// v_receipt_accounting view does not exist yet.
+function describeError(err) {
+  if (err.code === '42P01') {
+    return 'The accounting view is missing. Run migration 007_spending_balance_payment_methods.sql on the database.';
+  }
+  return err.message || 'Failed to load balance sheet';
 }
 
 // Aggregated accounting balance sheet plus spending and payment-method
@@ -88,7 +99,38 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to load balance sheet' });
+    res.status(500).json({ error: describeError(err) });
+  }
+});
+
+// Export the accounting data (one row per active receipt) as CSV. CSV opens
+// directly in Excel; the BOM and formula-injection guard live in sendCsv.
+router.get('/export.csv', async (req, res) => {
+  try {
+    const { where, params } = buildWhere(req.query);
+    const result = await pool.query(`
+      SELECT receipt_id,
+             receipt_date,
+             store,
+             worker_name,
+             project_name,
+             balance_section,
+             accounting_type,
+             account_code,
+             account_name,
+             category_group,
+             category_name,
+             payment_method,
+             subtotal,
+             tax,
+             total
+      FROM v_receipt_accounting ${where}
+      ORDER BY balance_section, account_code, receipt_date
+    `, params);
+    return sendCsv(res, 'accounting_export.csv', result.rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send(describeError(err));
   }
 });
 

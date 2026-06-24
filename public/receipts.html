@@ -45,7 +45,7 @@
       <div class="grid compact">
         <button>Apply Filter</button>
         <button type="button" class="secondary" onclick="clearFilters()">Clear</button>
-        <button type="button" class="secondary" onclick="exportCsv()">Export CSV</button>
+        <button type="button" class="secondary" onclick="exportCsv()">Export to Excel (CSV)</button>
       </div>
     </form>
   </div>
@@ -99,7 +99,7 @@ async function loadLookups() {
   [workers, projects, categories, accounts, paymentMethods] = await Promise.all([
     api('/api/lookups/workers'), api('/api/lookups/projects'),
     api('/api/lookups/categories?kind=expense'), api('/api/lookups/accounts?kind=expense'),
-    api('/api/lookups/payment-methods')
+    api('/api/lookups/payment-methods').catch(() => [])
   ]);
   document.getElementById('workerFilter').innerHTML = '<option value="">All</option>' + optionHtml(workers, 'worker_id', 'name');
   document.getElementById('projectFilter').innerHTML = '<option value="">All</option>' + optionHtml(projects, 'id', 'name');
